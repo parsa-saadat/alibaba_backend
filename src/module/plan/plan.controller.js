@@ -1,22 +1,18 @@
 import {
-  createCartService,
-  deleteCartService,
-  getCartsService,
-  getCartService,
-  updateCartSsrvice,
-} from './cart.service.js';
+  createPlanService,
+  getPlanService,
+  getPlansService,
+  updatePlanService,
+  deletePlanService,
+} from './plan.service.js';
 
-export const createCartController = async (req, res) => {
+export const createPlanController = async (req, res) => {
   try {
-    const data = req.body;
-    const requester = req.user;
-    const user = req.params.userId;
-    const cart = await createCartService(user, data, requester);
-
+    const plan = await createPlanService(req.body, req.user);
     res.status(201).json({
-      body: cart,
+      body: plan,
       status: 201,
-      message: 'Cart created successfully',
+      message: 'Plan created successfully',
       success: true,
     });
   } catch (e) {
@@ -29,33 +25,13 @@ export const createCartController = async (req, res) => {
   }
 };
 
-export const getCartsController = async (req, res) => {
+export const getPlansController = async (req, res) => {
   try {
-    const carts = await getCartsService(req.params.userId, req.user, req.query);
+    const plans = await getPlansService(req.query, req.user);
     res.status(200).json({
-      body: carts,
+      body: plans,
       status: 200,
-      message: 'Carts retrieved successfully',
-      success: true,
-    });
-  } catch (e) {
-    res.status(e.cause?.code || 500).json({
-      body: null,
-      status: e.cause?.code || 500,
-      message: e.message,
-      success: false,
-      ss: '',
-    });
-  }
-};
-
-export const getCartController = async (req, res) => {
-  try {
-    const cart = await getCartService(req.params.userId, req.params.productId, req.user);
-    res.status(200).json({
-      body: cart,
-      status: 200,
-      message: 'Cart retrieved successfully',
+      message: 'Plans fetched successfully',
       success: true,
     });
   } catch (e) {
@@ -68,19 +44,13 @@ export const getCartController = async (req, res) => {
   }
 };
 
-export const updateCartController = async (req, res) => {
+export const getPlanController = async (req, res) => {
   try {
-    const cart = await updateCartSsrvice(
-      req.params.userId,
-      req.params.productId,
-      req.body,
-      req.user,
-    );
-
+    const plan = await getPlanService(req.params.id, req.user);
     res.status(200).json({
-      body: cart,
+      body: plan,
       status: 200,
-      message: 'Cart updated successfully',
+      message: 'Plan fetched successfully',
       success: true,
     });
   } catch (e) {
@@ -93,14 +63,32 @@ export const updateCartController = async (req, res) => {
   }
 };
 
-export const deleteCartController = async (req, res) => {
+export const updatePlanController = async (req, res) => {
   try {
-    const cart = await deleteCartService(req.params.userId, req.params.productId, req.user);
-
+    const plan = await updatePlanService(req.params.id, req.body, req.user);
     res.status(200).json({
-      body: cart,
+      body: plan,
       status: 200,
-      message: 'Cart deleted successfully',
+      message: 'Plan updated successfully',
+      success: true,
+    });
+  } catch (e) {
+    res.status(e.cause?.code || 500).json({
+      body: null,
+      status: e.cause?.code || 500,
+      message: e.message,
+      success: false,
+    });
+  }
+};
+
+export const deletePlanController = async (req, res) => {
+  try {
+    const plan = await deletePlanService(req.params.id, req.user);
+    res.status(200).json({
+      body: plan,
+      status: 200,
+      message: 'Plan deleted successfully',
       success: true,
     });
   } catch (e) {

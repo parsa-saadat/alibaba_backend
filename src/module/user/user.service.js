@@ -51,7 +51,7 @@ export const updateUserService = async (id, data, requester) => {
   if (user._id.toString() !== requester._id.toString() && requester.role !== 'admin')
     throw new Error('Access Denied', { cause: { code: 400 } });
 
-  let { username, firstname, lastname, email, address } = data;
+  let { username, firstname, lastname, email } = data;
 
   if (email && !emailValidator(email)) throw new Error('Invalid email', { cause: { code: 400 } });
 

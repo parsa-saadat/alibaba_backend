@@ -52,7 +52,10 @@ export const updateOneCart = async (field, data) => {
   if (field?.product_id) field.product_id = new ObjectId(field.product_id);
 
   const update = await db.collection('carts').updateOne(field, {
-    ...data,
+    $set: {
+      ...data,
+      update_at: new Date(),
+    },
   });
 
   const updateDocument = await db.collection('carts').findOne({ _id: update.upsertedId });

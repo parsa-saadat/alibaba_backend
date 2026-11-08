@@ -95,8 +95,9 @@ export const registerSellerService = async (data, requester) => {
   await updateOneUser(
     { _id: id },
     {
+      role: user.role !== "admin" ? "seller" : 'admin' ,
       is_seller: true,
-      seller_active_status: 'inactive',
+      seller_active_status: 'INACTIVE',
       seller_approved_status: false,
       seller_type,
       national_ID,
@@ -111,9 +112,8 @@ export const registerSellerService = async (data, requester) => {
         firstname_lastname: settlement_account.firstname_lastname,
       },
       seller_plan: {
-        type: 'free',
-        period: 'forever',
-        started_at: new Date(),
+        plan_id : null,
+        start_at: new Date()
       },
     },
   );
@@ -245,7 +245,7 @@ export const updateSellerService = async (id, data, requester) => {
 
   if (requester.role === 'admin') {
     if (seller_active_status !== undefined &&
-      !['active', 'inactive'].includes(seller_active_status))
+      !['ACTIVE', 'INACTIVE'].includes(seller_active_status))
       throw new Error('Invalid seller_active_status', { cause: { code: 400 } });
 
     if (seller_approved_status !== undefined &&
@@ -265,7 +265,7 @@ export const updateSellerService = async (id, data, requester) => {
       seller_active_status:
         requester.role === 'admin'
           ? seller_active_status ?? user.seller_active_status
-          : 'inactive',
+          : 'INACTIVE',
 
       seller_approved_status:
         requester.role === 'admin'

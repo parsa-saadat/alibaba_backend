@@ -1,9 +1,9 @@
-import { loginService, sendCodeService } from './auth.service.js';
+import { sendLoginCodeService, verifyLoginCodeService } from './auth.service.js';
 
 export const sendCodeController = async (req, res) => {
   try {
     const { phone } = req.body;
-    const code = await sendCodeService({ phone });
+    const code = await sendLoginCodeService({ phone });
 
     res.status(200).json({
       body: code || null,
@@ -24,7 +24,7 @@ export const sendCodeController = async (req, res) => {
 export const loginController = async (req, res) => {
   try {
     const { phone, code } = req.body;
-    const token = await loginService({ phone, code });
+    const token = await verifyLoginCodeService({ phone, code });
 
     res.status(200).json({
       body: token,

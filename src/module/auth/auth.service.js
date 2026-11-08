@@ -1,144 +1,179 @@
-import { v4 as uuidv4 } from 'uuid';
-import { hash, genSalt, compare } from 'bcrypt';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import axios from 'axios';
 
 import {
   findOneUser,
   insertUser,
   updateOneUser,
 } from '../../model/controller/user.controller.js';
-import { validateIRPhoneSyntax } from '../../utils/validators/phone.validator.js';
-import { generateNumber } from '../../utils/generators/number.generator.js';
 
-export const preService = async (data) => {
-  let { phone, accept_rules } = data;
+// import { sendSms } from '../../utils/sendSms.js';
 
-  if (!phone && !accept_rules)
-    throw new Error('Phone number and accept rules field are required', {
-      cause: { code: 400 },
-    });
-
-  if (accept_rules !== true)
-    throw new Error('You must accept rules', {
-      cause: { code: 400 },
-    });
-
-  if (!validateIRPhoneSyntax(phone))
-    throw new Error('Phone number is not valid', {
-      cause: { code: 400 },
-    });
-
-  if (phone.startsWith('09')) phone = '+98' + phone.slice(1);
-
-  const checkUser = await findOneUser({ phone });
-  if (!checkUser) {
-    const username = uuidv4().slice(0, 8);
-    insertUser({
-      username,
-      phone,
-      role: 'user',
-    });
-  }
+// Generate OTP
+const generateOTP = () => {
+  return crypto.randomInt(100000, 1000000).toString();
 };
 
-export const sendCodeService = async (data) => {
-  let { phone } = data;
-  const code = generateNumber(5).toString();
-  const {
-    STATUS,
-    KAVENEGAR_API_KEY: api_key,
-    KAVENEGAR_VERIFY_TEMPLATE_NAME: template,
-  } = process.env;
+// Hash OTP
+const hashOTP = (code) => {
+  return crypto
+    .createHmac('sha256', process.env.OTP_SECRET)
+    .update(code)
+    .digest('hex');
+};
 
-  const url = `https://api.kavenegar.com/v1/${api_key}/${template}/lookup.json`;
+// Compare OTP
+const compareOTP = (code, hashedCode) => {
+  const inputHash = Buffer.from(hashOTP(code), 'hex');
+  const storedHash = Buffer.from(hashedCode, 'hex');
 
-  const salt = await genSalt(10);
-  const hashedCode = await hash(code, salt);
+  return (
+    inputHash.length === storedHash.length &&
+    crypto.timingSafeEqual(inputHash, storedHash)
+  );
+};
 
-  if (STATUS == 'DEV') {
-    if (phone.startsWith('09')) phone = '+98' + phone.slice(1);
+// Send Login Code
+export const sendLoginCodeService = async (data) => {
+  const { phone } = data;
 
-    await updateOneUser({ phone }, { verify: { code: hashedCode, date: new Date() } });
-    console.log(code);
-    return code;
+  if (!phone || !/^09\d{9}$/.test(phone))
+    throw new Error('Invalid phone number', { cause: { code: 400 } });
+
+  if (!['DEV', 'PROD'].includes(process.env.STATUS))
+    throw new Error('Invalid application status', { cause: { code: 500 } });
+
+  // Find user
+  let user = await findOneUser({ phone });
+
+  // Create user if not exists
+  if (!user) {
+    user = await insertUser({ phone, username: `user_${crypto.randomBytes(5).toString('hex')}`, role: "user" });
   }
 
-  const response = await axios.post(
-    url,
-    new URLSearchParams({
-      receptor: phone,
-      token: code,
-      template: template,
-    }).toString(),
+  // Generate OTP
+  const code = generateOTP();
+  const codeHash = hashOTP(code);
+
+  const sentAt = new Date();
+  const expiresAt = new Date(sentAt.getTime() + 5 * 60 * 1000);
+
+  console.log(user)
+
+  // Save authentication data
+  await updateOneUser(
+    { _id: user._id },
     {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+      'auth.code_hash': codeHash,
+      'auth.login.sent_at': sentAt,
+      'auth.login.expires_at': expiresAt,
+      'auth.login.attempts': 0,
     },
   );
 
-  if (response.data.return.status !== 200)
-    throw new Error('Code sending failed', {
-      cause: { code: 500 },
-    });
 
-  if (phone.startsWith('09')) phone = '+98' + phone.slice(1);
+  if (process.env.STATUS == "DEV") {
+    console.log(code)
+    return code
+  }
 
-  await updateOneUser({ phone }, { verify: { code: hashedCode, date: new Date() } });
+  // // Send SMS
+  // try {
+  //   await sendSms(phone, code);
+  // } catch (error) {
+  //   await updateOneUser(
+  //     { _id: user._id },
+  //     {
+  //       'auth.code_hash': null,
+  //       'auth.login.sent_at': null,
+  //       'auth.login.expires_at': null,
+  //     },
+  //   );
+  // throw error;
+  // }
+
+  return true
 };
 
-export const loginService = async (data) => {
-  let { phone, code } = data;
+// Verify Login Code
+export const verifyLoginCodeService = async (data) => {
+  const { phone, code } = data;
 
-  if ((!code, !phone))
-    throw new Error('Phone number and code are required', {
-      cause: { code: 400 },
-    });
+  console.log(code)
 
-  if (!validateIRPhoneSyntax(phone))
-    throw new Error('Phone number is not valid', {
-      cause: { code: 400 },
-    });
+  if (!phone || !/^09\d{9}$/.test(phone) || !/^\d{6}$/.test(String(code)))
+    throw new Error('Invalid phone or code', { cause: { code: 400 } });
 
-  if (phone.startsWith('09')) phone = '+98' + phone.slice(1);
-
+  // Find user
   const user = await findOneUser({ phone });
-  if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
-  const { verify } = user;
+  if (!user)
+    throw new Error('User not found', { cause: { code: 404 } });
 
-  console.log(verify)
+  const auth = user.auth;
 
-  if (!verify) throw new Error('Missing send sms request', { cause: { code: 400 } });
+  if (!auth?.code_hash || !auth?.login?.expires_at)
+    throw new Error('Verification code not found', { cause: { code: 404 } });
 
-  const { code: hashedCode, date } = verify;
+  // Check expiration
+  if (Date.now() >= new Date(auth.login.expires_at).getTime()) {
+    await updateOneUser(
+      { _id: user._id },
+      {
+        'auth.code_hash': null,
+        'auth.login.sent_at': null,
+        'auth.login.expires_at': null,
+        'auth.login.attempts': 0,
+      },
+    );
 
-  if (Date.now() - date > 1000 * 60 * 5)
-    throw new Error('Code is expired', {
-      cause: { code: 400 },
-    });
+    throw new Error('Verification code expired', { cause: { code: 400 } });
+  }
 
-  const isCodeValid = await compare(code.toString(), hashedCode);
-  if (!isCodeValid)
-    throw new Error('Code is not valid', {
-      cause: { code: 400 },
-    });
+  // Check attempts
+  if (auth.login.attempts >= 5)
+    throw new Error('Too many incorrect attempts', { cause: { code: 429 } });
 
-  const token = jwt.sign(
+  // Compare code
+  if (!compareOTP(String(code), auth.code_hash)) {
+    await updateOneUser(
+      {
+        _id: user._id,
+        'auth.login.attempts': { $lt: 5 },
+      },
+      {
+        'auth.login.attempts': auth.login.attempts + 1,
+      },
+    );
+
+    throw new Error('Invalid verification code', { cause: { code: 400 } });
+  }
+
+  // Remove OTP after successful verification
+  await updateOneUser(
+    { _id: user._id },
     {
-      _id: user._id,
-      phone: user.phone,
-      username: user.username,
-      role: user.role,
-    },
-    process.env.JWT_SECRET,
-    {
-      expiresIn: '30d',
+      'auth.code_hash': null,
+      'auth.login.sent_at': null,
+      'auth.login.expires_at': null,
+      'auth.login.attempts': 0,
     },
   );
 
-  await updateOneUser({ phone }, { verify: null });
+  // Generate JWT
+  const token = jwt.sign(
+    { _id: user._id, role: user.role, phone: user.phone, username: user.username, is_seller: user.is_seller ? true : false },
+    process.env.JWT_SECRET,
+    { expiresIn: '30d' },
+  );
 
-  return { _id: user._id, phone: user.phone, username: user.username, role: user.role, token };
+  // Remove sensitive authentication data
+  const userData = user;
+  delete userData.password;
+  delete userData.auth;
+
+  return {
+    token,
+    user: userData,
+  };
 };

@@ -5,8 +5,8 @@ import {
   getCartController,
   getCartsController,
   updateCartController,
-} from '../../module/carts/cart.controller.js';
-import { authenticateToken } from '../../module/carts/cart.middleware.js';
+} from '../../module/cart/cart.controller.js';
+import { authenticateToken } from '../../module/cart/cart.middleware.js';
 
 const router = express.Router();
 

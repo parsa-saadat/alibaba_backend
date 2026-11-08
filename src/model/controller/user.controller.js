@@ -10,7 +10,12 @@ export const insertUser = async (data) => {
     create_at: new Date(),
     update_at: new Date(),
   });
-  return insert;
+
+  const insertDocument = await db.collection('users').findOne({
+    _id: insert.insertedId,
+  });
+
+  return insertDocument;
 };
 
 // update

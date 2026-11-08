@@ -4,21 +4,27 @@ import {
   createProductController,
   deleteProductController,
   getProductController,
+  getProductPermController,
   getProductsController,
+  getProductsPermController,
   updateProductController,
 } from '../../module/product/product.controller.js';
 import { authenticateToken, authorizeRoles } from '../../module/product/product.middleware.js';
 
 const router = express.Router();
 
-router.post('/', authenticateToken, authorizeRoles('admin'), createProductController);
+router.post('/product', authenticateToken, createProductController);
 
-router.get('/', getProductsController);
+router.get('/product', getProductsController);
 
-router.get('/:id', getProductController);
+router.get('/product/:id', getProductController);
 
-router.put('/:id', authenticateToken, authorizeRoles('admin'), updateProductController);
+router.get('/perm/products', authenticateToken, getProductsPermController);
 
-router.delete('/:id', authenticateToken, authorizeRoles('admin'), deleteProductController);
+router.get('/perm/product/:productId', authenticateToken, getProductPermController);
+
+router.put('/product/:id', authenticateToken, updateProductController);
+
+router.delete('/product/:id', authenticateToken, deleteProductController);
 
 export default router;
