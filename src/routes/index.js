@@ -11,6 +11,7 @@ import storeRouter from './store/store.route.js';
 import planRouter from './plan/plan.route.js';
 import orderRouter from './order/order.route.js'
 import paymentRouter from './payment/payment.route.js'
+import categoryRouter from './category/category.route.js'
 
 const router = Router();
 
@@ -35,5 +36,7 @@ router.use('/plan', planRouter);
 router.use('/', orderRouter);
 
 router.use('/', paymentRouter);
+
+router.use('/', categoryRouter);
 
 export default router;

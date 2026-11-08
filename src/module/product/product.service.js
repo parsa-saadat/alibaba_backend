@@ -12,8 +12,12 @@ import { deleteCarts, updateOneCart } from '../../model/controller/cart.controll
 import { findOneFile } from '../../model/controller/storage.controller.js';
 import { findOneStore } from '../../model/controller/store.controller.js';
 import { findOneUser, updateOneUser } from '../../model/controller/user.controller.js';
+import { findOneCategory } from '../../model/controller/category.controller.js';  // ⭐ جدید
 import { MarkdownValidator } from '../../utils/validators/markdown.validator.js';
 
+// ─────────────────────────────────────────────
+// createProductService
+// ─────────────────────────────────────────────
 export const createProductService = async (data, requester) => {
   const user = await findOneUser({ _id: requester._id });
 
@@ -136,8 +140,19 @@ export const createProductService = async (data, requester) => {
   if (data.name.length > 200)
     throw new Error('Name cannot exceed 200 characters', { cause: { code: 400 } });
 
-  if (!Number.isInteger(data.category_id) || data.category_id <= 0)
-    throw new Error('category_id must be a positive integer', { cause: { code: 400 } });
+  // ─── category_id (ObjectId) ⭐ ───
+  if (
+    !data.category_id ||
+    typeof data.category_id !== 'string' ||
+    data.category_id.length !== 24 ||
+    !ObjectId.isValid(data.category_id)
+  )
+    throw new Error('Invalid category id', { cause: { code: 400 } });
+
+  const category = await findOneCategory({ _id: data.category_id });
+  if (!category) throw new Error('Category not found', { cause: { code: 404 } });
+  if (category.status !== 'ACTIVE')
+    throw new Error('Category is not active', { cause: { code: 400 } });
 
   if (!data.short_description || typeof data.short_description !== 'string')
     throw new Error('short_description is required', { cause: { code: 400 } });
@@ -298,7 +313,7 @@ export const createProductService = async (data, requester) => {
     name: data.name.trim(),
     seller_id: userStore.user,
     store_id: userStore._id,
-    category_id: data.category_id,
+    category_id: category._id,   // ⭐ ObjectId
     short_description: data.short_description.trim(),
     description: data.description,
     production: data.production,
@@ -333,12 +348,15 @@ export const createProductService = async (data, requester) => {
     weight: {
       value: data.weight.value,
       unit: data.weight.unit.toUpperCase(),
-    }
+    },
   };
 
   return await insertProduct(newProduct);
 };
 
+// ─────────────────────────────────────────────
+// getProductsService
+// ─────────────────────────────────────────────
 export const getProductsService = async (filter = {}) => {
   let {
     page = 1, limit = 10, desc,
@@ -358,15 +376,23 @@ export const getProductsService = async (filter = {}) => {
   if (seller_id && !ObjectId.isValid(seller_id))
     throw new Error('Seller id is not valid', { cause: { code: 400 } });
 
+  // ⭐ validate category_id
+  if (category_id && !ObjectId.isValid(category_id))
+    throw new Error('Category id is not valid', { cause: { code: 400 } });
+
   const isDesc = desc === 'true' || desc === true;
-  let products = await findProducts({ status: "ACTIVE", visibility: "PUBLIC" }, isDesc);
+  let products = await findProducts({ status: 'ACTIVE', visibility: 'PUBLIC' }, isDesc);
 
   if (seller_id)
     products = products.filter((p) => p.seller_id?.toString() === String(seller_id));
 
   if (brand) products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
   if (name) products = products.filter((p) => p.name?.toLowerCase().includes(name.toLowerCase()));
-  if (category_id) { const c = Number(category_id); products = products.filter((p) => p.category_id === c); }
+
+  // ⭐ فیلتر category_id با ObjectId
+  if (category_id)
+    products = products.filter((p) => p.category_id?.toString() === String(category_id));
+
   if (stock_status) products = products.filter((p) => p.stock_status?.toLowerCase().includes(stock_status.toLowerCase()));
   if (warranty !== undefined) { const w = warranty === 'true' || warranty === true; products = products.filter((p) => p.warranty === w); }
   if (tags) { const list = Array.isArray(tags) ? tags : [tags]; products = products.filter((p) => list.some((t) => p.tags?.some((x) => x.toLowerCase().includes(t.toLowerCase())))); }
@@ -385,11 +411,12 @@ export const getProductsService = async (filter = {}) => {
   return { data: products, total, totalPages };
 };
 
+// ─────────────────────────────────────────────
+// getProductsPermService
+// ─────────────────────────────────────────────
 export const getProductsPermService = async (sellerId, requester, filter = {}) => {
   if (!requester)
     throw new Error('Authentication required', { cause: { code: 401 } });
-
-  console.log(requester)
 
   const isAdmin = requester.role === 'admin';
   const isSeller = requester.is_seller === true;
@@ -425,6 +452,10 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
   if (page < 1)
     throw new Error('Page is not valid', { cause: { code: 400 } });
 
+  // ⭐ validate category_id
+  if (category_id && !ObjectId.isValid(category_id))
+    throw new Error('Category id is not valid', { cause: { code: 400 } });
+
   const isDesc = desc === 'true' || desc === true;
   let products = await findProducts({}, isDesc);
 
@@ -434,7 +465,11 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
 
   if (brand) products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
   if (name) products = products.filter((p) => p.name?.toLowerCase().includes(name.toLowerCase()));
-  if (category_id) { const c = Number(category_id); products = products.filter((p) => p.category_id === c); }
+
+  // ⭐ فیلتر category_id با ObjectId
+  if (category_id)
+    products = products.filter((p) => p.category_id?.toString() === String(category_id));
+
   if (stock_status) products = products.filter((p) => p.stock_status?.toLowerCase().includes(stock_status.toLowerCase()));
   if (status) products = products.filter((p) => p.status?.toLowerCase() === status.toLowerCase());
   if (visibility) products = products.filter((p) => p.visibility?.toLowerCase() === visibility.toLowerCase());
@@ -455,6 +490,9 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
   return { data: products, total, totalPages };
 };
 
+// ─────────────────────────────────────────────
+// getProductService (بدون تغییر)
+// ─────────────────────────────────────────────
 export const getProductService = async (id) => {
   if (!id || typeof id !== 'string' || id.length !== 24 || !ObjectId.isValid(id))
     throw new Error('Invalid product id', { cause: { code: 400 } });
@@ -469,6 +507,9 @@ export const getProductService = async (id) => {
   return product;
 };
 
+// ─────────────────────────────────────────────
+// getProductPermService (بدون تغییر)
+// ─────────────────────────────────────────────
 export const getProductPermService = async (id, requester) => {
   if (!requester)
     throw new Error('Authentication required', { cause: { code: 401 } });
@@ -496,6 +537,9 @@ export const getProductPermService = async (id, requester) => {
   throw new Error('Product not found', { cause: { code: 404 } });
 };
 
+// ─────────────────────────────────────────────
+// updateProductService
+// ─────────────────────────────────────────────
 export const updateProductService = async (id, data, requester) => {
   if (!id || typeof id !== 'string' || id.length !== 24 || !ObjectId.isValid(id))
     throw new Error('Invalid product id', { cause: { code: 400 } });
@@ -537,11 +581,25 @@ export const updateProductService = async (id, data, requester) => {
       throw new Error('Name cannot exceed 200 characters', { cause: { code: 400 } });
   }
 
-  if (
-    data.category_id !== undefined &&
-    (!Number.isInteger(data.category_id) || data.category_id <= 0)
-  )
-    throw new Error('category_id must be a positive integer', { cause: { code: 400 } });
+  // ─── category_id (ObjectId) ⭐ ───
+  let newCategoryId = null;
+
+  if (data.category_id !== undefined) {
+    if (
+      !data.category_id ||
+      typeof data.category_id !== 'string' ||
+      data.category_id.length !== 24 ||
+      !ObjectId.isValid(data.category_id)
+    )
+      throw new Error('Invalid category id', { cause: { code: 400 } });
+
+    const category = await findOneCategory({ _id: data.category_id });
+    if (!category) throw new Error('Category not found', { cause: { code: 404 } });
+    if (category.status !== 'ACTIVE')
+      throw new Error('Category is not active', { cause: { code: 400 } });
+
+    newCategoryId = category._id;
+  }
 
   if (data.short_description !== undefined) {
     if (typeof data.short_description !== 'string' || !data.short_description.trim())
@@ -782,7 +840,10 @@ export const updateProductService = async (id, data, requester) => {
 
   const updatedProduct = {
     name: data.name !== undefined ? data.name.trim() : product.name,
-    category_id: data.category_id !== undefined ? data.category_id : product.category_id,
+
+    // ⭐ category_id به ObjectId
+    category_id: newCategoryId !== null ? newCategoryId : product.category_id,
+
     short_description:
       data.short_description !== undefined
         ? data.short_description.trim()
@@ -845,12 +906,15 @@ export const updateProductService = async (id, data, requester) => {
         data.weight?.unit !== undefined
           ? data.weight.unit.toUpperCase()
           : product.weight?.unit ?? null,
-    }
+    },
   };
 
   return await updateOneProduct({ _id: id }, { ...updatedProduct, update_at: new Date() });
 };
 
+// ─────────────────────────────────────────────
+// deleteProductService (بدون تغییر)
+// ─────────────────────────────────────────────
 export const deleteProductService = async (id, requester) => {
   if (!id || typeof id !== 'string' || id.length !== 24 || !ObjectId.isValid(id))
     throw new Error('Invalid product id', { cause: { code: 400 } });
