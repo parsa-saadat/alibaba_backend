@@ -11,19 +11,79 @@ import {
   updateOneStore,
   deleteOneStore,
 } from '../../model/controller/store.controller.js';
-import { findOneUser } from '../../model/controller/user.controller.js';
+import { findOneUser, updateOneUser } from '../../model/controller/user.controller.js';
+import { findOnePlan } from '../../model/controller/plan.controller.js';
 
+// ─────────────────────────────────────────────
+// createStoreService
+// ─────────────────────────────────────────────
 export const createStoreService = async (user, data, requester) => {
   if (user._id.toString() !== requester._id.toString() && requester.role !== 'admin')
     throw new Error('Access Denied', { cause: { code: 400 } });
 
-  const userData = await findOneUser({ _id: user._id })
+  const userData = await findOneUser({ _id: user._id });
+  if (!userData) throw new Error('User not found', { cause: { code: 404 } });
 
-  if (userData.role == "seller" && (userData.seller_approved_status !== true || userData.seller_active_status == "INACTIVE"))
-    throw new Error('Seller has no actived or is not approved ', { cause: { code: 403 } });
+  const isAdmin = requester.role === 'admin';
+  const isSeller = userData.role === 'seller' || userData.is_seller === true;
 
+  // ─── چک فروشنده + پلن (فقط برای غیر ادمین) ───
+  if (!isAdmin) {
+    if (!isSeller)
+      throw new Error('Seller is not active or not approved', { cause: { code: 403 } });
+
+    if (userData.seller_approved_status !== true)
+      throw new Error('Seller is not approved', { cause: { code: 403 } });
+
+    if (String(userData.seller_active_status || '').toLowerCase() === 'inactive')
+      throw new Error('Seller is not active', { cause: { code: 403 } });
+
+    // Plan وجود داره؟
+    if (!userData.seller_plan?.plan_id)
+      throw new Error('Seller has no active plan', { cause: { code: 403 } });
+
+    const userPlan = await findOnePlan({ _id: userData.seller_plan.plan_id });
+
+    if (!userPlan) {
+      await updateOneUser(
+        { _id: userData._id },
+        { seller_plan: { plan_id: null, start_at: null } },
+      );
+      throw new Error('Plan not found', { cause: { code: 403 } });
+    }
+
+    if (userPlan.status !== 'ACTIVE')
+      throw new Error('Plan is not active', { cause: { code: 403 } });
+
+    const startedAt = new Date(userData.seller_plan.start_at).getTime();
+
+    if (!Number.isFinite(startedAt))
+      throw new Error('Plan start date is invalid', { cause: { code: 403 } });
+
+    if (userPlan.duration_days !== null) {
+      const planExpiry = startedAt + userPlan.duration_days * 24 * 60 * 60 * 1000;
+
+      if (Date.now() >= planExpiry) {
+        await updateOneUser(
+          { _id: userData._id },
+          { seller_plan: { plan_id: null, start_at: null } },
+        );
+        throw new Error('Plan has expired', { cause: { code: 403 } });
+      }
+    }
+
+    // ⭐ محدودیت تعداد فروشگاه
+    const maxShops = userPlan.features?.max_shops ?? 0;
+    const existingStores = await findStores({ user: userData._id });
+
+    if (existingStores.length >= maxShops)
+      throw new Error(`Your plan is limited to ${maxShops} stores`, {
+        cause: { code: 403 },
+      });
+  }
+
+  // ─── validation فروشگاه ───
   const requiredFields = ['name', 'contact_info'];
-
   const isValidStore = requiredFields.every((field) => data[field]);
 
   if (!isValidStore) throw new Error('Required fields missing', { cause: { code: 400 } });
@@ -72,6 +132,9 @@ export const createStoreService = async (user, data, requester) => {
   return await insertStore(newStore);
 };
 
+// ─────────────────────────────────────────────
+// getStoresService (عمومی)
+// ─────────────────────────────────────────────
 export const getStoresService = async (filter = {}) => {
   let { page = 1, limit = 10, desc, name, email, phone, user_id } = filter;
   limit = Number(limit) || 10;
@@ -90,7 +153,6 @@ export const getStoresService = async (filter = {}) => {
   if (name) stores = stores.filter((s) => s.name?.includes(name));
   if (email) stores = stores.filter((s) => s.contact_info?.email?.includes(email));
   if (phone) stores = stores.filter((s) => s.contact_info?.phone?.includes(phone));
-  // فیلتر status عمداً اعمال نمی‌شود تا کسی نتواند DISABLE ببیند
 
   const total = stores.length;
   const totalPages = Math.ceil(total / limit);
@@ -100,64 +162,64 @@ export const getStoresService = async (filter = {}) => {
   return { data: stores, total, totalPages };
 };
 
+// ─────────────────────────────────────────────
+// getStoresPermService (admin/seller)
+// ─────────────────────────────────────────────
 export const getStoresPermService = async (userId, requester, filter = {}) => {
   if (!requester)
     throw new Error('Authentication required', { cause: { code: 401 } });
 
-  const isAdmin  = requester.role === 'admin';
-  const isSeller = requester.role === 'seller';
-  console.log(requester , isAdmin , isSeller)
+  const isAdmin = requester.role === 'admin';
+  const isSeller = requester.role === 'seller' || requester.is_seller === true;
+
   if (!isAdmin && !isSeller)
     throw new Error('No Access', { cause: { code: 403 } });
 
   const requesterId = requester._id.toString();
 
-  // ── تعیین کاربر هدف ──
-  let targetUserId = null; // null = همه
+  let targetUserId = null;
 
   if (isAdmin) {
-    // ادمین: اگر user_id داده شد → همان کاربر، وگرنه همه
     if (userId) {
       if (!ObjectId.isValid(userId))
         throw new Error('User id is not valid', { cause: { code: 400 } });
       targetUserId = String(userId);
     }
   } else {
-    // فروشنده: همیشه فقط خودش — user_id ورودی نادیده گرفته می‌شود
     targetUserId = requesterId;
   }
 
   let { page = 1, limit = 10, desc, name, status, email, phone } = filter;
   limit = Number(limit) || 10;
-  page  = Number(page)  || 1;
+  page = Number(page) || 1;
 
-  // ── ساخت query ──
   const query = {};
   if (targetUserId) query.user = targetUserId;
 
   let stores = await findStores(query, desc);
 
-  // ── فیلترهای جستجو ──
-  if (name)   stores = stores.filter((s) => s.name?.includes(name));
+  if (name) stores = stores.filter((s) => s.name?.includes(name));
   if (status) stores = stores.filter((s) => s.status === status);
-  if (email)  stores = stores.filter((s) => s.contact_info?.email?.includes(email));
-  if (phone)  stores = stores.filter((s) => s.contact_info?.phone?.includes(phone));
+  if (email) stores = stores.filter((s) => s.contact_info?.email?.includes(email));
+  if (phone) stores = stores.filter((s) => s.contact_info?.phone?.includes(phone));
 
-  const total      = stores.length;
+  const total = stores.length;
   const totalPages = Math.ceil(total / limit);
-  const start      = (page - 1) * limit;
+  const start = (page - 1) * limit;
   stores = stores.slice(start, start + limit);
 
   return { data: stores, total, totalPages };
 };
 
+// ─────────────────────────────────────────────
+// getStoreService (عمومی)
+// ─────────────────────────────────────────────
 export const getStoreService = async (storeId) => {
   if (!ObjectId.isValid(storeId))
     throw new Error('Store id is not valid', { cause: { code: 400 } });
 
   const store = await findOneStore({ _id: storeId });
-  if (!store)
-    throw new Error('Store not found', { cause: { code: 404 } });
+  if (!store) throw new Error('Store not found', { cause: { code: 404 } });
 
   if (store.status !== 'ENABLE')
     throw new Error('Store not found', { cause: { code: 404 } });
@@ -165,12 +227,16 @@ export const getStoreService = async (storeId) => {
   return store;
 };
 
+// ─────────────────────────────────────────────
+// getStorePermService (admin/seller)
+// ─────────────────────────────────────────────
 export const getStorePermService = async (storeId, requester) => {
   if (!requester)
     throw new Error('Authentication required', { cause: { code: 401 } });
 
   const isAdmin = requester.role === 'admin';
-  const isSeller = requester.role === 'seller';
+  const isSeller = requester.role === 'seller' || requester.is_seller === true;
+
   if (!isAdmin && !isSeller)
     throw new Error('No Access', { cause: { code: 403 } });
 
@@ -178,36 +244,85 @@ export const getStorePermService = async (storeId, requester) => {
     throw new Error('Store id is not valid', { cause: { code: 400 } });
 
   const store = await findOneStore({ _id: storeId });
-  if (!store)
-    throw new Error('Store not found', { cause: { code: 404 } });
+  if (!store) throw new Error('Store not found', { cause: { code: 404 } });
 
   if (isAdmin) return store;
 
-  // seller
   const requesterId = requester._id.toString();
   const ownerId = String(store.user);
 
-  if (ownerId === requesterId) return store; // owner: any status
+  if (ownerId === requesterId) return store;
 
-  // other sellers/users' stores → hidden
   throw new Error('Store not found', { cause: { code: 404 } });
 };
 
+// ─────────────────────────────────────────────
+// updateStoreService
+// ─────────────────────────────────────────────
 export const updateStoreService = async (id, data, requester) => {
-  const userData = await findOneUser({ _id: requester._id })
+  if (!ObjectId.isValid(id))
+    throw new Error('Store id is not valid', { cause: { code: 400 } });
 
-  if (userData.role == "seller" && (userData.seller_approved_status !== true || userData.seller_active_status == "INACTIVE"))
-    throw new Error('Seller has no actived or is not approved ', { cause: { code: 403 } });
+  const userData = await findOneUser({ _id: requester._id });
+  if (!userData) throw new Error('User not found', { cause: { code: 404 } });
+
+  const isAdmin = requester.role === 'admin';
+  const isSeller = userData.role === 'seller' || userData.is_seller === true;
+
+  // ─── چک فروشنده + پلن (فقط غیر ادمین) ───
+  if (!isAdmin) {
+    if (!isSeller)
+      throw new Error('Seller is not active or not approved', { cause: { code: 403 } });
+
+    if (userData.seller_approved_status !== true)
+      throw new Error('Seller is not approved', { cause: { code: 403 } });
+
+    if (String(userData.seller_active_status || '').toLowerCase() === 'inactive')
+      throw new Error('Seller is not active', { cause: { code: 403 } });
+
+    if (!userData.seller_plan?.plan_id)
+      throw new Error('Seller has no active plan', { cause: { code: 403 } });
+
+    const userPlan = await findOnePlan({ _id: userData.seller_plan.plan_id });
+
+    if (!userPlan) {
+      await updateOneUser(
+        { _id: userData._id },
+        { seller_plan: { plan_id: null, start_at: null } },
+      );
+      throw new Error('Plan not found', { cause: { code: 403 } });
+    }
+
+    if (userPlan.status !== 'ACTIVE')
+      throw new Error('Plan is not active', { cause: { code: 403 } });
+
+    const startedAt = new Date(userData.seller_plan.start_at).getTime();
+
+    if (!Number.isFinite(startedAt))
+      throw new Error('Plan start date is invalid', { cause: { code: 403 } });
+
+    if (userPlan.duration_days !== null) {
+      const planExpiry = startedAt + userPlan.duration_days * 24 * 60 * 60 * 1000;
+
+      if (Date.now() >= planExpiry) {
+        await updateOneUser(
+          { _id: userData._id },
+          { seller_plan: { plan_id: null, start_at: null } },
+        );
+        throw new Error('Plan has expired', { cause: { code: 403 } });
+      }
+    }
+
+
+  }
 
   const store = await findOneStore({ _id: id });
-
   if (!store) throw new Error('Store not found', { cause: { code: 404 } });
 
-  if (store.user.toString() !== requester._id.toString() && requester.role !== 'admin')
+  if (String(store.user) !== String(requester._id) && !isAdmin)
     throw new Error('Access Denied', { cause: { code: 400 } });
 
-
-  if (store.status === 'ROOT_DISABLE' && requester.role !== 'admin')
+  if (store.status === 'ROOT_DISABLE' && !isAdmin)
     throw new Error('Access Denied', { cause: { code: 400 } });
 
   let { name, status, profile_image_id, banner_image_id, description, contact_info } = data;
@@ -215,7 +330,7 @@ export const updateStoreService = async (id, data, requester) => {
   if (status && !['ENABLE', 'DISABLE', 'ROOT_DISABLE'].includes(status))
     throw new Error('Invalid status', { cause: { code: 400 } });
 
-  if (status === 'ROOT_DISABLE' && requester.role !== 'admin')
+  if (status === 'ROOT_DISABLE' && !isAdmin)
     throw new Error('Access Denied', { cause: { code: 400 } });
 
   if (profile_image_id && !ObjectId.isValid(profile_image_id))
@@ -266,20 +381,34 @@ export const updateStoreService = async (id, data, requester) => {
   return true;
 };
 
+// ─────────────────────────────────────────────
+// deleteStoreService
+// ─────────────────────────────────────────────
 export const deleteStoreService = async (id, requester) => {
-  const userData = await findOneUser({ _id: userId })
+  if (!ObjectId.isValid(id))
+    throw new Error('Store id is not valid', { cause: { code: 400 } });
 
-  if (userData.role == "seller" && (userData.seller_approved_status !== true || userData.seller_active_status == "INACTIVE"))
-    throw new Error('Seller has no actived or is not approved ', { cause: { code: 403 } });
+  const userData = await findOneUser({ _id: requester._id });
+  if (!userData) throw new Error('User not found', { cause: { code: 404 } });
+
+  const isAdmin = requester.role === 'admin';
+  const isSeller = userData.role === 'seller' || userData.is_seller === true;
+
+  if (!isAdmin && !isSeller)
+    throw new Error('No Access', { cause: { code: 403 } });
+
+  if (!isAdmin) {
+    if (userData.seller_approved_status !== true)
+      throw new Error('Seller is not approved', { cause: { code: 403 } });
+  }
 
   const store = await findOneStore({ _id: id });
-
-  if (store?.user?.toString() !== requester?._id?.toString() && requester?.role !== 'admin')
-    throw new Error('Access Denied', { cause: { code: 400 } });
-
   if (!store) throw new Error('Store not found', { cause: { code: 404 } });
 
-  if (store.status === 'ROOT_DISABLE' && requester.role !== 'admin')
+  if (String(store.user) !== String(requester._id) && !isAdmin)
+    throw new Error('Access Denied', { cause: { code: 400 } });
+
+  if (store.status === 'ROOT_DISABLE' && !isAdmin)
     throw new Error('Access Denied', { cause: { code: 400 } });
 
   await deleteOneStore({ _id: id });

@@ -6,6 +6,7 @@ import {
   insertUser,
   updateOneUser,
 } from '../../model/controller/user.controller.js';
+import { validateIRPhoneSyntax } from '../../utils/validators/phone.validator.js';
 
 // import { sendSms } from '../../utils/sendSms.js';
 
@@ -35,9 +36,11 @@ const compareOTP = (code, hashedCode) => {
 
 // Send Login Code
 export const sendLoginCodeService = async (data) => {
-  const { phone } = data;
+  let { phone } = data;
 
-  if (!phone || !/^09\d{9}$/.test(phone))
+  if (phone.startsWith('0')) phone = `+98${phone.slice(1)}`;
+
+  if (!phone || !validateIRPhoneSyntax(phone))
     throw new Error('Invalid phone number', { cause: { code: 400 } });
 
   if (!['DEV', 'PROD'].includes(process.env.STATUS))
@@ -45,7 +48,6 @@ export const sendLoginCodeService = async (data) => {
 
   // Find user
   let user = await findOneUser({ phone });
-
   // Create user if not exists
   if (!user) {
     user = await insertUser({ phone, username: `user_${crypto.randomBytes(5).toString('hex')}`, role: "user" });
@@ -53,6 +55,7 @@ export const sendLoginCodeService = async (data) => {
 
   // Generate OTP
   const code = generateOTP();
+  console.log(code)
   const codeHash = hashOTP(code);
 
   const sentAt = new Date();
@@ -97,12 +100,12 @@ export const sendLoginCodeService = async (data) => {
 
 // Verify Login Code
 export const verifyLoginCodeService = async (data) => {
-  const { phone, code } = data;
+  let { phone, code } = data;
 
-  console.log(code)
+  if (phone.startsWith('0')) phone = `+98${phone.slice(1)}`;
 
-  if (!phone || !/^09\d{9}$/.test(phone) || !/^\d{6}$/.test(String(code)))
-    throw new Error('Invalid phone or code', { cause: { code: 400 } });
+  if (!phone || !validateIRPhoneSyntax(phone))
+    throw new Error('Invalid phone number', { cause: { code: 400 } });
 
   // Find user
   const user = await findOneUser({ phone });

@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticateToken, authorizeRoles } from '../../module/plan/plan.middleware.js';
+import { authenticateToken, authorizeRoles, optionalAuthenticateToken } from '../../module/plan/plan.middleware.js';
 import {
   createPlanController,
   getPlansController,
@@ -10,9 +10,9 @@ import {
 
 const router = express.Router();
 
-router.get('/', getPlansController);
+router.get('/', optionalAuthenticateToken, getPlansController);
 
-router.get('/:id', getPlanController);
+router.get('/:id', optionalAuthenticateToken, getPlanController);
 
 router.post('/', authenticateToken, authorizeRoles('admin'), createPlanController);
 

@@ -7,6 +7,10 @@ export const insertStore = async (data) => {
 
   if (data?.user) data.user = new ObjectId(data.user);
 
+  if (data?.profile_image_id) data.profile_image_id = new ObjectId(data.profile_image_id);
+
+  if (data?.banner_image_id) data.banner_image_id = new ObjectId(data.banner_image_id);
+
   const insert = await db.collection('stores').insertOne({
     ...data,
     create_at: new Date(),
@@ -43,9 +47,16 @@ export const updateOneStore = async (field, data) => {
 
   if (field?.user) field.user = new ObjectId(field.user);
 
-  console.log(field, data)
+  if (data?.profile_image_id) data.profile_image_id = new ObjectId(data.profile_image_id);
 
-  const update = await db.collection('stores').updateOne(field, { ...data });
+  if (data?.banner_image_id) data.banner_image_id = new ObjectId(data.banner_image_id);
+
+  const update = await db.collection('stores').updateOne(field, {
+    $set: {
+      ...data,
+      update_at: new Date(),
+    },
+  });
 
   const updateDocument = await db.collection('stores').findOne({ _id: update.upsertedId });
 
