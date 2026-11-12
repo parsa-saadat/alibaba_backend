@@ -21,7 +21,7 @@ router.post(
   uploadController,
 );
 
-router.get('/', authorizeRoles('admin'), getFilesController);
+router.get('/', authenticateToken, authorizeRoles('admin'), getFilesController);
 
 router.get('/:id', getOneFileController);
 
