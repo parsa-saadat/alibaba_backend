@@ -26,7 +26,7 @@ export const getUsersController = async (req, res) => {
 
 export const getUserController = async (req, res) => {
   try {
-    const user = await getUserService(req.user._id, req.user);
+    const user = await getUserService(req.params.userId, req.user);
     res.status(200).json({
       body: user,
       status: 200,

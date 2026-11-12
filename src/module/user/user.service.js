@@ -1,3 +1,5 @@
+import { deleteAddress } from '../../model/controller/address.controller.js';
+import { deleteCarts } from '../../model/controller/cart.controller.js';
 import {
   deleteOneUser,
   findOneUser,
@@ -34,34 +36,53 @@ export const getUsersService = async (filter = {}) => {
 
 export const getUserService = async (id, requester) => {
   const user = await findOneUser({ _id: id });
-
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
-  if (user._id.toString() !== requester._id.toString() && requester.role !== 'admin')
-    throw new Error('Access Denied', { cause: { code: 400 } });
+  const isSelfOrAdmin =
+    requester &&
+    (user._id.toString() === requester._id.toString() ||
+      requester.role === 'admin');
 
-  return user;
+  if (isSelfOrAdmin) return user;
+
+  return {
+    _id: user._id,
+    username: user.username,
+    firstname: user.firstname,   // ← اگه مدل first_name هست، اینجا عوض کن
+    lastname: user.lastname,     // ← اگه مدل last_name هست، اینجا عوض کن
+    is_seller: user.is_seller,
+    seller_trust: user.seller_trust,
+    seller_active_status: user.seller_active_status,
+    seller_approved_status: user.seller_approved_status,
+  };
 };
 
 export const updateUserService = async (id, data, requester) => {
   const user = await findOneUser({ _id: id });
-
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
-  if (user._id.toString() !== requester._id.toString() && requester.role !== 'admin')
+  if (
+    user._id.toString() !== requester._id.toString() &&
+    requester.role !== 'admin'
+  )
     throw new Error('Access Denied', { cause: { code: 400 } });
 
   let { username, firstname, lastname, email } = data;
 
-  if (email && !emailValidator(email)) throw new Error('Invalid email', { cause: { code: 400 } });
+  if (email && !emailValidator(email))
+    throw new Error('Invalid email', { cause: { code: 400 } });
 
-  const checkUsername = username ? await findOneUser({ username }) : null;
-  if (checkUsername && checkUsername._id !== id)
-    throw new Error('Username already exists', { cause: { code: 400 } });
+  if (username) {
+    const existing = await findOneUser({ username });
+    if (existing && existing._id.toString() !== id.toString())
+      throw new Error('Username already exists', { cause: { code: 400 } });
+  }
 
-  const checkEmail = email ? await findOneUser({ email }) : null;
-  if (checkEmail && checkEmail._id !== id)
-    throw new Error('Email already exists', { cause: { code: 400 } });
+  if (email) {
+    const existing = await findOneUser({ email });
+    if (existing && existing._id.toString() !== id.toString())
+      throw new Error('Email already exists', { cause: { code: 400 } });
+  }
 
   await updateOneUser(
     { _id: id },
@@ -85,6 +106,8 @@ export const deleteUserService = async (id, requester) => {
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
   await deleteAddress({ user: id });
+
+  await deleteCarts({ user_id: id })
 
   await deleteOneUser({ _id: id });
 

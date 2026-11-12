@@ -17,6 +17,15 @@ const ACCOUNT_TYPES = (
   process.env.SETTLEMENT_ACCOUNT_TYPES || 'card'
 ).split(',');
 
+const IDENTITY_FIELDS = [
+  'seller_type',
+  'national_ID',
+  'birth_date',
+  'identity_image_id',
+  'identity_verification_image_id',
+  'address',
+];
+
 export const registerSellerService = async (data, requester) => {
   const id = data._id ?? requester._id;
 
@@ -95,7 +104,7 @@ export const registerSellerService = async (data, requester) => {
   await updateOneUser(
     { _id: id },
     {
-      role: user.role !== "admin" ? "seller" : 'admin' ,
+      role: user.role !== "admin" ? "seller" : 'admin',
       is_seller: true,
       seller_active_status: 'INACTIVE',
       seller_approved_status: false,
@@ -104,6 +113,7 @@ export const registerSellerService = async (data, requester) => {
       birth_date,
       identity_image_id,
       identity_verification_image_id,
+      seller_trust: false,
       address,
       settlement_account: {
         type: settlement_account.type,
@@ -112,7 +122,7 @@ export const registerSellerService = async (data, requester) => {
         firstname_lastname: settlement_account.firstname_lastname,
       },
       seller_plan: {
-        plan_id : null,
+        plan_id: null,
         start_at: new Date()
       },
     },
@@ -177,7 +187,6 @@ export const getSellerService = async (id, requester) => {
 
 export const updateSellerService = async (id, data, requester) => {
   const user = await findOneUser({ _id: id });
-
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
   if (user._id.toString() !== requester._id.toString() && requester.role !== 'admin')
@@ -186,10 +195,28 @@ export const updateSellerService = async (id, data, requester) => {
   if (!user.is_seller)
     throw new Error('User is not a seller', { cause: { code: 400 } });
 
+  const isAdmin = requester.role === 'admin';
+
+  const identityLocked =
+    user.identity_locked === true || user.seller_approved_status === true;
+
+  if (!isAdmin && identityLocked) {
+    for (const field of IDENTITY_FIELDS) {
+      if (data[field] !== undefined) {
+        throw new Error(
+          `${field} cannot be edited after approval. Only settlement account can be updated.`,
+          { cause: { code: 403 } },
+        );
+      }
+    }
+  }
+
   const {
     seller_type,
     national_ID,
     birth_date,
+    identity_image_id,
+    identity_verification_image_id,
     address,
     settlement_account,
     seller_active_status,
@@ -204,13 +231,23 @@ export const updateSellerService = async (id, data, requester) => {
 
   if (national_ID && national_ID !== user.national_ID) {
     const existing = await findOneUser({ national_ID });
-
     if (existing && existing._id.toString() !== id.toString())
       throw new Error('national_ID already registered', { cause: { code: 400 } });
   }
 
   if (address && (!address.province || !address.city || !address.full_address))
     throw new Error('address is incomplete', { cause: { code: 400 } });
+
+  if (identity_image_id) {
+    const img = await findOneFile({ _id: identity_image_id });
+    if (!img)
+      throw new Error('identity image ID not found', { cause: { code: 404 } });
+  }
+  if (identity_verification_image_id) {
+    const img = await findOneFile({ _id: identity_verification_image_id });
+    if (!img)
+      throw new Error('identity verification image ID not found', { cause: { code: 404 } });
+  }
 
   let updated_settlement_account = user.settlement_account;
 
@@ -237,13 +274,10 @@ export const updateSellerService = async (id, data, requester) => {
       throw new Error('firstname_lastname is required', { cause: { code: 400 } });
   }
 
-  if (requester.role !== 'admin' && (
-    seller_active_status !== undefined ||
-    seller_approved_status !== undefined
-  ))
+  if (!isAdmin && (seller_active_status !== undefined || seller_approved_status !== undefined))
     throw new Error('Only admin can change seller status', { cause: { code: 403 } });
 
-  if (requester.role === 'admin') {
+  if (isAdmin) {
     if (seller_active_status !== undefined &&
       !['ACTIVE', 'INACTIVE'].includes(seller_active_status))
       throw new Error('Invalid seller_active_status', { cause: { code: 400 } });
@@ -253,26 +287,55 @@ export const updateSellerService = async (id, data, requester) => {
       throw new Error('Invalid seller_approved_status', { cause: { code: 400 } });
   }
 
-  await updateOneUser(
-    { _id: id },
-    {
-      seller_type: seller_type ?? user.seller_type,
-      national_ID: national_ID ?? user.national_ID,
-      birth_date: birth_date ?? user.birth_date,
-      address: address ?? user.address,
-      settlement_account: updated_settlement_account,
+  const updatePayload = {
+    seller_type: seller_type ?? user.seller_type,
+    national_ID: national_ID ?? user.national_ID,
+    birth_date: birth_date ?? user.birth_date,
+    identity_image_id: identity_image_id ?? user.identity_image_id,
+    identity_verification_image_id:
+      identity_verification_image_id ?? user.identity_verification_image_id,
+    address: address ?? user.address,
+    settlement_account: updated_settlement_account,
+  };
 
-      seller_active_status:
-        requester.role === 'admin'
-          ? seller_active_status ?? user.seller_active_status
-          : 'INACTIVE',
+  if (isAdmin) {
+    if (seller_active_status !== undefined)
+      updatePayload.seller_active_status = seller_active_status;
 
-      seller_approved_status:
-        requester.role === 'admin'
-          ? seller_approved_status ?? user.seller_approved_status
-          : false,
-    },
-  );
+    if (seller_approved_status !== undefined) {
+      updatePayload.seller_approved_status = seller_approved_status;
+      updatePayload.identity_locked = seller_approved_status;
+    }
+  }
+
+  await updateOneUser({ _id: id }, updatePayload);
+
+  return true;
+};
+
+export const trustSellerService = async (id, trust, requester) => {
+  // فقط ادمین
+  if (requester.role !== 'admin')
+    throw new Error('Access Denied', { cause: { code: 403 } });
+
+  // اعتبارسنجی ورودی: باید boolean باشه
+  if (typeof trust !== 'boolean')
+    throw new Error('trust must be a boolean', { cause: { code: 400 } });
+
+  const user = await findOneUser({ _id: id });
+  if (!user) throw new Error('User not found', { cause: { code: 404 } });
+
+  if (!user.is_seller)
+    throw new Error('User is not a seller', { cause: { code: 400 } });
+
+  // (اختیاری) فقط seller تأییدشده رو بشه trust کرد
+  if (trust === true && user.seller_approved_status !== true)
+    throw new Error('Seller must be approved before trusting', { cause: { code: 400 } });
+
+  // اگه همین وضعیت بود، کاری نکن (idempotent)
+  if (user.seller_trust === trust) return true;
+
+  await updateOneUser({ _id: id }, { seller_trust: trust });
 
   return true;
 };
