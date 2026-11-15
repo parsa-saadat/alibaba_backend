@@ -91,6 +91,7 @@ export const payOrderService = async (orderId, requester) => {
       description: `Payment for order ${parent.order_number}`,
     });
   } catch (err) {
+    console.log(err.message , console.log(payableAmount))
     throw new Error('Payment gateway is not available', { cause: { code: 502 } });
   }
 
@@ -360,7 +361,7 @@ export const payPlanService = async (planId, requester) => {
       currency: 'IRR',
       description: `Payment for plan ${plan.name}`,
     });
-    
+
   } catch (err) {
     throw new Error('Payment gateway is not available', { cause: { code: 502 } });
   }

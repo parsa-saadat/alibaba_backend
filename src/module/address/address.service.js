@@ -45,7 +45,7 @@ export const createAddressService = async (userId, data, requester) => {
 
   const user = await findOneUser({ _id: userId });
 
-  if(!user)
+  if (!user)
     throw new Error('User not found', { cause: { code: 404 } });
 
   if (data.address.is_default) {
