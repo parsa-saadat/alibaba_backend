@@ -180,3 +180,30 @@ export const verifyLoginCodeService = async (data) => {
     user: userData,
   };
 };
+
+export const refreshSessionService = async (requester) => {
+  if (!requester?._id)
+    throw new Error('Authentication required', { cause: { code: 401 } });
+
+  const user = await findOneUser({ _id: requester._id });
+  if (!user) throw new Error('User not found', { cause: { code: 401 } });
+
+  const token = jwt.sign(
+    {
+      _id: user._id,
+      role: user.role,
+      phone: user.phone,
+      username: user.username,
+      is_seller: user.is_seller ? true : false,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '30d' },
+  );
+
+  const userData = { ...user };
+  delete userData.password;
+  delete userData.auth;
+
+  return { token, user: userData };
+};
+

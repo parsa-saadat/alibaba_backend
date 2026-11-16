@@ -1,4 +1,4 @@
-import { sendLoginCodeService, verifyLoginCodeService } from './auth.service.js';
+import { refreshSessionService, sendLoginCodeService, verifyLoginCodeService } from './auth.service.js';
 
 export const sendCodeController = async (req, res) => {
   try {
@@ -30,6 +30,25 @@ export const loginController = async (req, res) => {
       body: token,
       status: 200,
       message: 'Login successfully',
+      success: true,
+    });
+  } catch (e) {
+    res.status(e.cause?.code || 500).json({
+      body: null,
+      status: e.cause?.code || 500,
+      message: e.message,
+      success: false,
+    });
+  }
+};
+
+export const sessionController = async (req, res) => {
+  try {
+    const session = await refreshSessionService(req.user);
+    res.status(200).json({
+      body: session,
+      status: 200,
+      message: 'Session is valid',
       success: true,
     });
   } catch (e) {
