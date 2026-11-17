@@ -65,14 +65,13 @@ export const updateOneProduct = async (field, data) => {
 
 // find
 
-export const findProducts = async (field, desc = false) => {
-  if (field?._id && typeof field?._id === 'string') {
-    field._id = new ObjectId(field._id);
-  }
-  let find;
-  if (desc) find = await db.collection('products').find(field).sort({ _id: -1 }).toArray();
-  else find = await db.collection('products').find(field).toArray();
-  return find;
+export const findProducts = async (field, desc = false, projection = null) => {
+  if (field?._id && typeof field._id === 'string') field._id = new ObjectId(field._id);
+
+  const options = projection ? { projection } : {};
+  let cursor = db.collection('products').find(field, options);
+  if (desc) cursor = cursor.sort({ _id: -1 });
+  return await cursor.toArray();
 };
 
 export const findOneProduct = async (field) => {

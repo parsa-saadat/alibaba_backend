@@ -5,6 +5,7 @@ import {
   getProductService,
   getProductsPermService,
   getProductsService,
+  searchStoresByProductService,
   updateProductService,
 } from './product.service.js';
 
@@ -90,6 +91,25 @@ export const getProductPermController = async (req, res) => {
     res.status(e.cause?.code || 500).json({
       body: null, status: e.cause?.code || 500,
       message: e.message, success: false,
+    });
+  }
+};
+
+export const searchStoresByProductController = async (req, res) => {
+  try {
+    const result = await searchStoresByProductService(req.query);
+    res.status(200).json({
+      body: result,
+      status: 200,
+      message: 'Stores fetched successfully',
+      success: true,
+    });
+  } catch (e) {
+    res.status(e.cause?.code || 500).json({
+      body: null,
+      status: e.cause?.code || 500,
+      message: e.message,
+      success: false,
     });
   }
 };

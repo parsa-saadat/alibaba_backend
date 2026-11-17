@@ -10,10 +10,37 @@ import {
 } from '../../model/controller/product.controller.js';
 import { deleteCarts, updateOneCart } from '../../model/controller/cart.controller.js';
 import { findOneFile } from '../../model/controller/storage.controller.js';
-import { findOneStore } from '../../model/controller/store.controller.js';
+import { findOneStore, findStores } from '../../model/controller/store.controller.js';
 import { findOneUser, updateOneUser } from '../../model/controller/user.controller.js';
-import { findOneCategory } from '../../model/controller/category.controller.js';  // ⭐ جدید
+import { findOneCategory } from '../../model/controller/category.controller.js';
 import { MarkdownValidator } from '../../utils/validators/markdown.validator.js';
+
+// ─── Projections ───
+const LIST_PROJECTION = {
+  _id: 1,
+  name: 1,
+  brand: 1,
+  price: 1,
+  discount: 1,
+  stock: 1,
+  stock_status: 1,
+  images_id: 1,
+  store_id: 1,
+  seller_id: 1,
+  rating: 1,
+  category_id: 1,   // primary (backward compat)
+  category_ids: 1,  // ⭐ همه‌ی دسته‌ها
+  production: 1,
+  warranty: 1,
+};
+
+const PERM_PROJECTION = {
+  ...LIST_PROJECTION,
+  status: 1,
+  visibility: 1,
+};
+
+const MAX_CATEGORIES_PER_PRODUCT = 10;
 
 // ─────────────────────────────────────────────
 // createProductService
@@ -50,7 +77,6 @@ export const createProductService = async (data, requester) => {
   const requiredFields = [
     'name',
     'store_id',
-    'category_id',
     'short_description',
     'description',
     'production',
@@ -70,6 +96,43 @@ export const createProductService = async (data, requester) => {
 
   if (!isValidProduct) throw new Error('Required fields missing', { cause: { code: 400 } });
 
+  // ─── ⭐ category_ids (حداقل یکی، حداکثر ۱۰) ───
+  let inputCategoryIds = [];
+
+  if (Array.isArray(data.category_ids) && data.category_ids.length > 0) {
+    inputCategoryIds = data.category_ids;
+  } else if (data.category_id) {
+    inputCategoryIds = [data.category_id];
+  } else {
+    throw new Error('category_ids is required', { cause: { code: 400 } });
+  }
+
+  if (inputCategoryIds.length > MAX_CATEGORIES_PER_PRODUCT)
+    throw new Error(
+      `category_ids cannot exceed ${MAX_CATEGORIES_PER_PRODUCT} items`,
+      { cause: { code: 400 } },
+    );
+
+  const seenCategoryIds = new Set();
+  const validCategoryIds = [];
+
+  for (const cid of inputCategoryIds) {
+    if (!cid || typeof cid !== 'string' || cid.length !== 24 || !ObjectId.isValid(cid))
+      throw new Error('Invalid category id', { cause: { code: 400 } });
+
+    if (seenCategoryIds.has(cid))
+      throw new Error(`Duplicate category id: ${cid}`, { cause: { code: 400 } });
+    seenCategoryIds.add(cid);
+
+    const category = await findOneCategory({ _id: cid });
+    if (!category) throw new Error(`Category not found: ${cid}`, { cause: { code: 404 } });
+    if (category.status !== 'ACTIVE')
+      throw new Error(`Category is not active: ${category.name}`, { cause: { code: 400 } });
+
+    validCategoryIds.push(category._id);
+  }
+
+  // ─── store_id ───
   if (
     !data.store_id ||
     typeof data.store_id !== 'string' ||
@@ -139,20 +202,6 @@ export const createProductService = async (data, requester) => {
 
   if (data.name.length > 200)
     throw new Error('Name cannot exceed 200 characters', { cause: { code: 400 } });
-
-  // ─── category_id (ObjectId) ⭐ ───
-  if (
-    !data.category_id ||
-    typeof data.category_id !== 'string' ||
-    data.category_id.length !== 24 ||
-    !ObjectId.isValid(data.category_id)
-  )
-    throw new Error('Invalid category id', { cause: { code: 400 } });
-
-  const category = await findOneCategory({ _id: data.category_id });
-  if (!category) throw new Error('Category not found', { cause: { code: 404 } });
-  if (category.status !== 'ACTIVE')
-    throw new Error('Category is not active', { cause: { code: 400 } });
 
   if (!data.short_description || typeof data.short_description !== 'string')
     throw new Error('short_description is required', { cause: { code: 400 } });
@@ -313,7 +362,8 @@ export const createProductService = async (data, requester) => {
     name: data.name.trim(),
     seller_id: userStore.user,
     store_id: userStore._id,
-    category_id: category._id,   // ⭐ ObjectId
+    category_id: validCategoryIds[0],   // primary (backward compat)
+    category_ids: validCategoryIds,     // ⭐ همه‌ی دسته‌ها
     short_description: data.short_description.trim(),
     description: data.description,
     production: data.production,
@@ -361,41 +411,71 @@ export const getProductsService = async (filter = {}) => {
   let {
     page = 1, limit = 10, desc,
     seller_id, brand, name, min_production, max_production,
-    category_id, stock_status, warranty, tags, currency, discount,
+    category_id, category_ids, stock_status, warranty, tags, currency, discount,
     min_price, max_price,
   } = filter;
 
   limit = Number(limit) || 10;
   page = Number(page) || 1;
 
-  if (limit < 1 || limit > 100)
-    throw new Error('Limit is not valid', { cause: { code: 400 } });
-  if (page < 1)
-    throw new Error('Page is not valid', { cause: { code: 400 } });
+  if (limit < 1 || limit > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
+  if (page < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
 
   if (seller_id && !ObjectId.isValid(seller_id))
     throw new Error('Seller id is not valid', { cause: { code: 400 } });
 
-  // ⭐ validate category_id
   if (category_id && !ObjectId.isValid(category_id))
     throw new Error('Category id is not valid', { cause: { code: 400 } });
 
+  // ─── ⭐ ساخت لیست فیلتر دسته‌بندی (OR) ───
+  const categoryFilterList = [];
+
+  if (category_id) categoryFilterList.push(String(category_id));
+
+  if (category_ids) {
+    const list = Array.isArray(category_ids) ? category_ids : String(category_ids).split(',');
+    for (const cid of list) {
+      const trimmed = String(cid).trim();
+      if (trimmed && ObjectId.isValid(trimmed) && !categoryFilterList.includes(trimmed)) {
+        categoryFilterList.push(trimmed);
+      }
+    }
+  }
+
   const isDesc = desc === 'true' || desc === true;
-  let products = await findProducts({ status: 'ACTIVE', visibility: 'PUBLIC' }, isDesc);
 
-  if (seller_id)
-    products = products.filter((p) => p.seller_id?.toString() === String(seller_id));
+  let products = await findProducts(
+    { status: 'ACTIVE', visibility: 'PUBLIC' },
+    isDesc,
+    LIST_PROJECTION,
+  );
 
+  if (seller_id) products = products.filter((p) => p.seller_id?.toString() === String(seller_id));
   if (brand) products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
   if (name) products = products.filter((p) => p.name?.toLowerCase().includes(name.toLowerCase()));
 
-  // ⭐ فیلتر category_id با ObjectId
-  if (category_id)
-    products = products.filter((p) => p.category_id?.toString() === String(category_id));
+  // ⭐ فیلتر category — با پشتیبانی از category_ids آرایه یا تک
+  if (categoryFilterList.length > 0) {
+    products = products.filter((p) => {
+      const pCats =
+        Array.isArray(p.category_ids) && p.category_ids.length > 0
+          ? p.category_ids.map(String)
+          : p.category_id
+            ? [String(p.category_id)]
+            : [];
+      return categoryFilterList.some((cid) => pCats.includes(cid));
+    });
+  }
 
   if (stock_status) products = products.filter((p) => p.stock_status?.toLowerCase().includes(stock_status.toLowerCase()));
-  if (warranty !== undefined) { const w = warranty === 'true' || warranty === true; products = products.filter((p) => p.warranty === w); }
-  if (tags) { const list = Array.isArray(tags) ? tags : [tags]; products = products.filter((p) => list.some((t) => p.tags?.some((x) => x.toLowerCase().includes(t.toLowerCase())))); }
+  if (warranty !== undefined) {
+    const w = warranty === 'true' || warranty === true;
+    products = products.filter((p) => p.warranty === w);
+  }
+  if (tags) {
+    const list = Array.isArray(tags) ? tags : [tags];
+    products = products.filter((p) => list.some((t) => p.tags?.some((x) => x.toLowerCase().includes(t.toLowerCase()))));
+  }
   if (currency) products = products.filter((p) => p.price?.currency?.toLowerCase() === currency.toLowerCase());
   if (discount) products = products.filter((p) => (p.discount?.percentage || 0) > 0);
   if (min_production) products = products.filter((p) => p.production >= Number(min_production));
@@ -408,6 +488,35 @@ export const getProductsService = async (filter = {}) => {
   const start = (page - 1) * limit;
   products = products.slice(start, start + limit);
 
+  // ─── افزودن store_name (inline) ───
+  if (products.length > 0) {
+    const storeIdSet = new Set();
+    for (const p of products) {
+      if (p.store_id && ObjectId.isValid(String(p.store_id))) {
+        storeIdSet.add(String(p.store_id));
+      }
+    }
+    const storeIdList = [...storeIdSet];
+
+    if (storeIdList.length > 0) {
+      const stores = await findStores({
+        _id: { $in: storeIdList.map((id) => new ObjectId(id)) },
+      });
+
+      const storeNameMap = new Map();
+      for (const s of stores) {
+        storeNameMap.set(String(s._id), s.name);
+      }
+
+      products = products.map((p) => ({
+        ...p,
+        store_name: storeNameMap.get(String(p.store_id)) || null,
+      }));
+    } else {
+      products = products.map((p) => ({ ...p, store_name: null }));
+    }
+  }
+
   return { data: products, total, totalPages };
 };
 
@@ -415,22 +524,18 @@ export const getProductsService = async (filter = {}) => {
 // getProductsPermService
 // ─────────────────────────────────────────────
 export const getProductsPermService = async (sellerId, requester, filter = {}) => {
-  if (!requester)
-    throw new Error('Authentication required', { cause: { code: 401 } });
+  if (!requester) throw new Error('Authentication required', { cause: { code: 401 } });
 
   const isAdmin = requester.role === 'admin';
   const isSeller = requester.is_seller === true;
-  if (!isAdmin && !isSeller)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isSeller) throw new Error('No Access', { cause: { code: 403 } });
 
   const requesterId = requester._id.toString();
 
   let targetSellerId = null;
-
   if (isAdmin) {
     if (sellerId) {
-      if (!ObjectId.isValid(sellerId))
-        throw new Error('Seller id is not valid', { cause: { code: 400 } });
+      if (!ObjectId.isValid(sellerId)) throw new Error('Seller id is not valid', { cause: { code: 400 } });
       targetSellerId = String(sellerId);
     }
   } else {
@@ -440,41 +545,65 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
   let {
     page = 1, limit = 10, desc,
     brand, name, min_production, max_production,
-    category_id, status, visibility, stock_status, warranty, tags, currency, discount,
+    category_id, category_ids, status, visibility, stock_status, warranty, tags, currency, discount,
     min_price, max_price,
   } = filter;
 
   limit = Number(limit) || 10;
   page = Number(page) || 1;
 
-  if (limit < 1 || limit > 100)
-    throw new Error('Limit is not valid', { cause: { code: 400 } });
-  if (page < 1)
-    throw new Error('Page is not valid', { cause: { code: 400 } });
+  if (limit < 1 || limit > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
+  if (page < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
 
-  // ⭐ validate category_id
   if (category_id && !ObjectId.isValid(category_id))
     throw new Error('Category id is not valid', { cause: { code: 400 } });
 
-  const isDesc = desc === 'true' || desc === true;
-  let products = await findProducts({}, isDesc);
+  // ─── ⭐ ساخت لیست فیلتر دسته‌بندی (OR) ───
+  const categoryFilterList = [];
 
-  if (targetSellerId) {
-    products = products.filter((p) => p.seller_id?.toString() === targetSellerId);
+  if (category_id) categoryFilterList.push(String(category_id));
+
+  if (category_ids) {
+    const list = Array.isArray(category_ids) ? category_ids : String(category_ids).split(',');
+    for (const cid of list) {
+      const trimmed = String(cid).trim();
+      if (trimmed && ObjectId.isValid(trimmed) && !categoryFilterList.includes(trimmed)) {
+        categoryFilterList.push(trimmed);
+      }
+    }
   }
 
+  const isDesc = desc === 'true' || desc === true;
+
+  let products = await findProducts({}, isDesc, PERM_PROJECTION);
+
+  if (targetSellerId) products = products.filter((p) => p.seller_id?.toString() === targetSellerId);
   if (brand) products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
   if (name) products = products.filter((p) => p.name?.toLowerCase().includes(name.toLowerCase()));
 
-  // ⭐ فیلتر category_id با ObjectId
-  if (category_id)
-    products = products.filter((p) => p.category_id?.toString() === String(category_id));
+  if (categoryFilterList.length > 0) {
+    products = products.filter((p) => {
+      const pCats =
+        Array.isArray(p.category_ids) && p.category_ids.length > 0
+          ? p.category_ids.map(String)
+          : p.category_id
+            ? [String(p.category_id)]
+            : [];
+      return categoryFilterList.some((cid) => pCats.includes(cid));
+    });
+  }
 
   if (stock_status) products = products.filter((p) => p.stock_status?.toLowerCase().includes(stock_status.toLowerCase()));
   if (status) products = products.filter((p) => p.status?.toLowerCase() === status.toLowerCase());
   if (visibility) products = products.filter((p) => p.visibility?.toLowerCase() === visibility.toLowerCase());
-  if (warranty !== undefined) { const w = warranty === 'true' || warranty === true; products = products.filter((p) => p.warranty === w); }
-  if (tags) { const list = Array.isArray(tags) ? tags : [tags]; products = products.filter((p) => list.some((t) => p.tags?.some((x) => x.toLowerCase().includes(t.toLowerCase())))); }
+  if (warranty !== undefined) {
+    const w = warranty === 'true' || warranty === true;
+    products = products.filter((p) => p.warranty === w);
+  }
+  if (tags) {
+    const list = Array.isArray(tags) ? tags : [tags];
+    products = products.filter((p) => list.some((t) => p.tags?.some((x) => x.toLowerCase().includes(t.toLowerCase()))));
+  }
   if (currency) products = products.filter((p) => p.price?.currency?.toLowerCase() === currency.toLowerCase());
   if (discount) products = products.filter((p) => (p.discount?.percentage || 0) > 0);
   if (min_production) products = products.filter((p) => p.production >= Number(min_production));
@@ -487,11 +616,40 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
   const start = (page - 1) * limit;
   products = products.slice(start, start + limit);
 
+  // ─── افزودن store_name (inline) ───
+  if (products.length > 0) {
+    const storeIdSet = new Set();
+    for (const p of products) {
+      if (p.store_id && ObjectId.isValid(String(p.store_id))) {
+        storeIdSet.add(String(p.store_id));
+      }
+    }
+    const storeIdList = [...storeIdSet];
+
+    if (storeIdList.length > 0) {
+      const stores = await findStores({
+        _id: { $in: storeIdList.map((id) => new ObjectId(id)) },
+      });
+
+      const storeNameMap = new Map();
+      for (const s of stores) {
+        storeNameMap.set(String(s._id), s.name);
+      }
+
+      products = products.map((p) => ({
+        ...p,
+        store_name: storeNameMap.get(String(p.store_id)) || null,
+      }));
+    } else {
+      products = products.map((p) => ({ ...p, store_name: null }));
+    }
+  }
+
   return { data: products, total, totalPages };
 };
 
 // ─────────────────────────────────────────────
-// getProductService (بدون تغییر)
+// getProductService
 // ─────────────────────────────────────────────
 export const getProductService = async (id) => {
   if (!id || typeof id !== 'string' || id.length !== 24 || !ObjectId.isValid(id))
@@ -508,7 +666,7 @@ export const getProductService = async (id) => {
 };
 
 // ─────────────────────────────────────────────
-// getProductPermService (بدون تغییر)
+// getProductPermService
 // ─────────────────────────────────────────────
 export const getProductPermService = async (id, requester) => {
   if (!requester)
@@ -535,6 +693,95 @@ export const getProductPermService = async (id, requester) => {
     return product;
 
   throw new Error('Product not found', { cause: { code: 404 } });
+};
+
+// ─────────────────────────────────────────────
+// searchStoresByProductService
+// ─────────────────────────────────────────────
+export const searchStoresByProductService = async (filter = {}) => {
+  const { q, name, page = 1, limit = 20 } = filter;
+  const queryText = String(q || name || '').trim();
+
+  if (!queryText) {
+    throw new Error('Search query (q or name) is required', { cause: { code: 400 } });
+  }
+
+  let pageNum = Number(page) || 1;
+  let limitNum = Number(limit) || 20;
+  if (limitNum < 1 || limitNum > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
+  if (pageNum < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
+
+  const needle = queryText.toLowerCase();
+
+  const allProducts = await findProducts(
+    { status: 'ACTIVE', visibility: 'PUBLIC' },
+    false,
+    {
+      _id: 1, name: 1, store_id: 1, images_id: 1, price: 1, discount: 1,
+      stock: 1, stock_status: 1, brand: 1,
+      category_id: 1, category_ids: 1,   // ⭐ هر دو
+      production: 1,
+    },
+  );
+
+  const matchedProducts = allProducts.filter(
+    (p) => p.name && p.name.toLowerCase().includes(needle),
+  );
+
+  if (matchedProducts.length === 0) {
+    return {
+      data: [],
+      total: 0,
+      totalPages: 0,
+      search_query: queryText,
+      matched_products_count: 0,
+    };
+  }
+
+  const storeIds = [...new Set(matchedProducts.map((p) => String(p.store_id)).filter(Boolean))];
+
+  const stores = await findStores({
+    _id: { $in: storeIds.map((id) => new ObjectId(id)) },
+  });
+  const enabledStores = stores.filter((s) => s.status === 'ENABLE');
+
+  if (enabledStores.length === 0) {
+    return {
+      data: [],
+      total: 0,
+      totalPages: 0,
+      search_query: queryText,
+      matched_products_count: matchedProducts.length,
+    };
+  }
+
+  const storeMap = new Map(enabledStores.map((s) => [String(s._id), s]));
+  const productsByStore = new Map();
+
+  for (const p of matchedProducts) {
+    const sid = String(p.store_id);
+    if (!storeMap.has(sid)) continue;
+    if (!productsByStore.has(sid)) productsByStore.set(sid, []);
+    productsByStore.get(sid).push(p);
+  }
+
+  let result = enabledStores.map((s) => ({
+    ...s,
+    matched_products: productsByStore.get(String(s._id)) || [],
+  }));
+
+  const total = result.length;
+  const totalPages = Math.ceil(total / limitNum);
+  const start = (pageNum - 1) * limitNum;
+  result = result.slice(start, start + limitNum);
+
+  return {
+    data: result,
+    total,
+    totalPages,
+    search_query: queryText,
+    matched_products_count: matchedProducts.length,
+  };
 };
 
 // ─────────────────────────────────────────────
@@ -581,24 +828,46 @@ export const updateProductService = async (id, data, requester) => {
       throw new Error('Name cannot exceed 200 characters', { cause: { code: 400 } });
   }
 
-  // ─── category_id (ObjectId) ⭐ ───
-  let newCategoryId = null;
+  // ─── ⭐ category_ids (update) ───
+  let newCategoryIds = null;
 
-  if (data.category_id !== undefined) {
-    if (
-      !data.category_id ||
-      typeof data.category_id !== 'string' ||
-      data.category_id.length !== 24 ||
-      !ObjectId.isValid(data.category_id)
-    )
-      throw new Error('Invalid category id', { cause: { code: 400 } });
+  if (data.category_ids !== undefined || data.category_id !== undefined) {
+    let inputCategoryIds = [];
 
-    const category = await findOneCategory({ _id: data.category_id });
-    if (!category) throw new Error('Category not found', { cause: { code: 404 } });
-    if (category.status !== 'ACTIVE')
-      throw new Error('Category is not active', { cause: { code: 400 } });
+    if (Array.isArray(data.category_ids) && data.category_ids.length > 0) {
+      inputCategoryIds = data.category_ids;
+    } else if (data.category_id) {
+      inputCategoryIds = [data.category_id];
+    } else {
+      throw new Error('category_ids must be a non-empty array', { cause: { code: 400 } });
+    }
 
-    newCategoryId = category._id;
+    if (inputCategoryIds.length > MAX_CATEGORIES_PER_PRODUCT)
+      throw new Error(
+        `category_ids cannot exceed ${MAX_CATEGORIES_PER_PRODUCT} items`,
+        { cause: { code: 400 } },
+      );
+
+    const seenCategoryIds = new Set();
+    const validCategoryIds = [];
+
+    for (const cid of inputCategoryIds) {
+      if (!cid || typeof cid !== 'string' || cid.length !== 24 || !ObjectId.isValid(cid))
+        throw new Error('Invalid category id', { cause: { code: 400 } });
+
+      if (seenCategoryIds.has(cid))
+        throw new Error(`Duplicate category id: ${cid}`, { cause: { code: 400 } });
+      seenCategoryIds.add(cid);
+
+      const category = await findOneCategory({ _id: cid });
+      if (!category) throw new Error(`Category not found: ${cid}`, { cause: { code: 404 } });
+      if (category.status !== 'ACTIVE')
+        throw new Error(`Category is not active: ${category.name}`, { cause: { code: 400 } });
+
+      validCategoryIds.push(category._id);
+    }
+
+    newCategoryIds = validCategoryIds;
   }
 
   if (data.short_description !== undefined) {
@@ -841,8 +1110,9 @@ export const updateProductService = async (id, data, requester) => {
   const updatedProduct = {
     name: data.name !== undefined ? data.name.trim() : product.name,
 
-    // ⭐ category_id به ObjectId
-    category_id: newCategoryId !== null ? newCategoryId : product.category_id,
+    // ⭐ category_ids + category_id (primary)
+    category_ids: newCategoryIds !== null ? newCategoryIds : product.category_ids,
+    category_id: newCategoryIds !== null ? newCategoryIds[0] : product.category_id,
 
     short_description:
       data.short_description !== undefined
@@ -913,7 +1183,7 @@ export const updateProductService = async (id, data, requester) => {
 };
 
 // ─────────────────────────────────────────────
-// deleteProductService (بدون تغییر)
+// deleteProductService
 // ─────────────────────────────────────────────
 export const deleteProductService = async (id, requester) => {
   if (!id || typeof id !== 'string' || id.length !== 24 || !ObjectId.isValid(id))

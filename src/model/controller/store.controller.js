@@ -22,14 +22,13 @@ export const insertStore = async (data) => {
   return insertDocument;
 };
 
-export const findStores = async (field) => {
-  if (field?._id) field._id = new ObjectId(field._id);
+export const findStores = async (field, desc) => {
+  if (field?._id && typeof field._id === 'string') field._id = new ObjectId(field._id);
+  if (field?.user && typeof field.user === 'string') field.user = new ObjectId(field.user);
 
-  if (field?.user) field.user = new ObjectId(field.user);
-
-  const stores = await db.collection('stores').find(field).toArray();
-
-  return stores;
+  let cursor = db.collection('stores').find(field);
+  if (desc) cursor = cursor.sort({ _id: -1 });
+  return await cursor.toArray();
 };
 
 export const findOneStore = async (field) => {

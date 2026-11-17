@@ -7,6 +7,7 @@ import {
   getProductPermController,
   getProductsController,
   getProductsPermController,
+  searchStoresByProductController,
   updateProductController,
 } from '../../module/product/product.controller.js';
 import { authenticateToken, authorizeRoles } from '../../module/product/product.middleware.js';
@@ -16,6 +17,8 @@ const router = express.Router();
 router.post('/product', authenticateToken, createProductController);
 
 router.get('/product', getProductsController);
+
+router.get('/product/stores', searchStoresByProductController);
 
 router.get('/product/:id', getProductController);
 
