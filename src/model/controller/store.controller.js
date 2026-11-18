@@ -1,3 +1,4 @@
+import { mongoTranslationUpdate } from '../../module/i18n/content.service.js';
 import { ObjectId } from 'mongodb';
 
 import db from '../../config/mongodb.config.js';
@@ -50,14 +51,9 @@ export const updateOneStore = async (field, data) => {
 
   if (data?.banner_image_id) data.banner_image_id = new ObjectId(data.banner_image_id);
 
-  const update = await db.collection('stores').updateOne(field, {
-    $set: {
-      ...data,
-      update_at: new Date(),
-    },
-  });
+  const update = await db.collection('stores').updateOne(field, mongoTranslationUpdate(data));
 
-  const updateDocument = await db.collection('stores').findOne({ _id: update.upsertedId });
+  const updateDocument = await db.collection('stores').findOne(field);
 
   return updateDocument;
 };

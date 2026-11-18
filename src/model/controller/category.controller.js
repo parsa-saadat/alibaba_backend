@@ -1,3 +1,4 @@
+import { mongoTranslationUpdate } from '../../module/i18n/content.service.js';
 import db from '../../config/mongodb.config.js';
 
 import { ObjectId } from 'mongodb';
@@ -25,12 +26,7 @@ export const updateOneCategory = async (field, data) => {
   if (field?.customer_id && typeof field?.customer_id === 'string') {
     field.customer_id = new ObjectId(field.customer_id);
   }
-  const update = await db.collection('categories').updateOne(field, {
-    $set: {
-      ...data,
-      update_at: new Date(),
-    },
-  });
+  const update = await db.collection('categories').updateOne(field, mongoTranslationUpdate(data));
 
   const updateDocument = await db.collection('categories').findOne(field);
 

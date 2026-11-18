@@ -1,3 +1,4 @@
+import { rialSnapshot } from '../fx/fx.service.js';
 import { ObjectId } from 'mongodb';
 import axios from 'axios';
 
@@ -36,6 +37,7 @@ export const payOrderService = async (orderId, requester) => {
 
   const parent = await findOneOrder({ _id: orderId });
   if (!parent) throw new Error('Order not found', { cause: { code: 404 } });
+  if (parent.currency !== 'IRR') throw new Error('Legacy non-IRR order requires explicit migration before payment', { cause: { code: 400 } });
 
   if (String(parent.customer_id) !== String(requester._id))
     throw new Error('Order access denied', { cause: { code: 403 } });
@@ -59,7 +61,7 @@ export const payOrderService = async (orderId, requester) => {
   const totalDiscount = payableSubs.reduce((sum, s) => sum + (s.discount_applied || 0), 0);
   const payableAmount = totalAmount - totalDiscount;
 
-  if (payableAmount < 1000)
+  if (!Number.isSafeInteger(payableAmount) || payableAmount < 1000)
     throw new Error('Minimum payment amount is 1000', { cause: { code: 400 } });
 
   // ─── sync مبالغ parent ───
@@ -343,8 +345,8 @@ export const payPlanService = async (planId, requester) => {
     throw new Error('Invalid payment amount', { cause: { code: 400 } });
 
   // ─── تبدیل IRT → IRR ───
-  let zarinpalAmount = finalAmount;
-  if (plan.price.currency === 'IRT') zarinpalAmount = finalAmount * 10;
+  const lockedPlanPrice = await rialSnapshot({ amount: finalAmount, currency: plan.price.currency });
+  const zarinpalAmount = lockedPlanPrice.amount;
 
   if (zarinpalAmount < 1000)
     throw new Error('Minimum payment amount is 1000 Rial', { cause: { code: 400 } });
@@ -381,6 +383,7 @@ export const payPlanService = async (planId, requester) => {
         discount_applied: discountApplied,
         currency: plan.price.currency,
         zarinpal_amount: zarinpalAmount,
+        fx_snapshot: lockedPlanPrice.quote,
         created_at: new Date(),
       },
     },

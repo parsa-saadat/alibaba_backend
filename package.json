@@ -5,8 +5,15 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start" : "nodemon src/app"
+    "start": "node src/bootstrap.js",
+    "dev": "node --watch src/bootstrap.js",
+    "test": "node --test test/*.test.js",
+    "migrate:i18n": "node scripts/migrate-i18n.js",
+    "setup": "node scripts/setup-env.js",
+    "doctor": "node scripts/doctor.js",
+    "check:imports": "node scripts/check-imports.js",
+    "test:integration": "node scripts/integration-check.js",
+    "doctor:fx": "node scripts/fx-doctor.js"
   },
   "keywords": [],
   "author": "",
@@ -25,5 +32,11 @@
     "morgan": "^1.12.1",
     "multer": "^2.4.0",
     "uuid": "^14.0.3"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0"
   }
 }

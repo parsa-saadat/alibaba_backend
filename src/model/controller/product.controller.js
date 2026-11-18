@@ -1,3 +1,4 @@
+import { mongoTranslationUpdate } from '../../module/i18n/content.service.js';
 import db from '../../config/mongodb.config.js';
 
 import { ObjectId } from 'mongodb';
@@ -30,12 +31,7 @@ export const updateProducts = async (field, data) => {
     }
   }
 
-  const update = await db.collection('products').updateOne(field, {
-    $set: {
-      ...data,
-      update_at: new Date(),
-    },
-  });
+  const update = await db.collection('products').updateOne(field, mongoTranslationUpdate(data));
   return update;
 };
 
@@ -51,14 +47,9 @@ export const updateOneProduct = async (field, data) => {
     }
   }
 
-  const update = await db.collection('products').updateOne(field, {
-    $set: {
-      ...data,
-      update_at: new Date(),
-    },
-  });
+  const update = await db.collection('products').updateOne(field, mongoTranslationUpdate(data));
 
-  const updatedProduct = await db.collection('products').findOne({ _id: update.upsertedId });
+  const updatedProduct = await db.collection('products').findOne(field);
 
   return updatedProduct;
 };

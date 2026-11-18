@@ -1,3 +1,4 @@
+import { mongoTranslationUpdate } from '../../module/i18n/content.service.js';
 import { ObjectId } from 'mongodb';
 
 import db from '../../config/mongodb.config.js';
@@ -43,13 +44,9 @@ export const updateOnePlan = async (field, data) => {
 
   if (field?.user) field.user = new ObjectId(field.user);
 
-  const update = await db.collection('plans').updateOne(field, {
-    $set: {
-      ...data, update_at: new Date(),
-    },
-  });
+  const update = await db.collection('plans').updateOne(field, mongoTranslationUpdate(data));
 
-  const updateDocument = await db.collection('plans').findOne({ _id: update.upsertedId });
+  const updateDocument = await db.collection('plans').findOne(field);
 
   return updateDocument;
 };

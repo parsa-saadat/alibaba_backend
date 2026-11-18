@@ -1,3 +1,11 @@
+import { deriveContent } from '../i18n/content.service.js';
+import { normalizeCatalogPrice } from '../fx/catalog-price.service.js';
+import {
+  translationCreate,
+  translationPatch,
+  searchableName,
+  searchableTags,
+} from '../i18n/content.service.js';
 import { ObjectId } from 'mongodb';
 
 import { findOnePlan } from '../../model/controller/plan.controller.js';
@@ -11,7 +19,11 @@ import {
 import { deleteCarts, updateOneCart } from '../../model/controller/cart.controller.js';
 import { findOneFile } from '../../model/controller/storage.controller.js';
 import { findOneStore, findStores } from '../../model/controller/store.controller.js';
-import { findOneUser, findUsersByIds, updateOneUser } from '../../model/controller/user.controller.js';
+import {
+  findOneUser,
+  findUsersByIds,
+  updateOneUser,
+} from '../../model/controller/user.controller.js';
 import { findOneCategory } from '../../model/controller/category.controller.js';
 import { MarkdownValidator } from '../../utils/validators/markdown.validator.js';
 
@@ -19,6 +31,8 @@ import { MarkdownValidator } from '../../utils/validators/markdown.validator.js'
 const LIST_PROJECTION = {
   _id: 1,
   name: 1,
+  translations: 1,
+  tags: 1,
   brand: 1,
   price: 1,
   discount: 1,
@@ -28,8 +42,8 @@ const LIST_PROJECTION = {
   store_id: 1,
   seller_id: 1,
   rating: 1,
-  category_id: 1,   // primary (backward compat)
-  category_ids: 1,  // ⭐ همه‌ی دسته‌ها
+  category_id: 1, // primary (backward compat)
+  category_ids: 1, // ⭐ همه‌ی دسته‌ها
   production: 1,
   warranty: 1,
 };
@@ -46,6 +60,7 @@ const MAX_CATEGORIES_PER_PRODUCT = 10;
 // createProductService
 // ─────────────────────────────────────────────
 export const createProductService = async (data, requester) => {
+  data = deriveContent(data, 'product');
   const user = await findOneUser({ _id: requester._id });
 
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
@@ -54,19 +69,18 @@ export const createProductService = async (data, requester) => {
   const isSeller = user.is_seller === true;
 
   if (!isAdmin && !isSeller) throw new Error('No Access', { cause: { code: 403 } });
+  if (data && Object.hasOwn(data, 'price'))
+    data = { ...data, price: await normalizeCatalogPrice(data.price) };
 
-  const ALLOWED_CURRENCIES = process.env.ALLOWED_CURRENCIES
-    ? process.env.ALLOWED_CURRENCIES.split(',')
-    : ['IRR'];
   const valid_stock_status = process.env.STOCK_STATUS
     ? process.env.STOCK_STATUS.split(',')
     : ['IN_STOCK', 'OUT_OF_STOCK'];
   const valid_status = process.env.PRODUCT_STATUS
     ? process.env.PRODUCT_STATUS.split(',').map((s) => s.toLowerCase())
-    : ['ACTIVE', 'INACTIVE'];
+    : ['active', 'inactive'];
   const valid_visibility = process.env.VISIBILITY
     ? process.env.VISIBILITY.split(',').map((s) => s.toLowerCase())
-    : ['PUBLIC', 'PRIVATE'];
+    : ['public', 'private'];
   const valid_dimension_units = process.env.DIMENSION_UNITS
     ? process.env.DIMENSION_UNITS.split(',')
     : ['CM', 'M'];
@@ -108,10 +122,9 @@ export const createProductService = async (data, requester) => {
   }
 
   if (inputCategoryIds.length > MAX_CATEGORIES_PER_PRODUCT)
-    throw new Error(
-      `category_ids cannot exceed ${MAX_CATEGORIES_PER_PRODUCT} items`,
-      { cause: { code: 400 } },
-    );
+    throw new Error(`category_ids cannot exceed ${MAX_CATEGORIES_PER_PRODUCT} items`, {
+      cause: { code: 400 },
+    });
 
   const seenCategoryIds = new Set();
   const validCategoryIds = [];
@@ -161,10 +174,7 @@ export const createProductService = async (data, requester) => {
     const userPlan = await findOnePlan({ _id: user.seller_plan.plan_id });
 
     if (!userPlan) {
-      await updateOneUser(
-        { _id: user._id },
-        { seller_plan: { plan_id: null, start_at: null } },
-      );
+      await updateOneUser({ _id: user._id }, { seller_plan: { plan_id: null, start_at: null } });
       throw new Error('Plan not found', { cause: { code: 403 } });
     }
 
@@ -180,10 +190,7 @@ export const createProductService = async (data, requester) => {
       const planExpiry = startedAt + userPlan.duration_days * 24 * 60 * 60 * 1000;
 
       if (Date.now() >= planExpiry) {
-        await updateOneUser(
-          { _id: user._id },
-          { seller_plan: { plan_id: null, start_at: null } },
-        );
+        await updateOneUser({ _id: user._id }, { seller_plan: { plan_id: null, start_at: null } });
         throw new Error('Plan has expired', { cause: { code: 403 } });
       }
     }
@@ -249,8 +256,8 @@ export const createProductService = async (data, requester) => {
   if (!data.price || typeof data.price !== 'object' || Array.isArray(data.price))
     throw new Error('Price is required', { cause: { code: 400 } });
 
-  if (!data.price.currency || !ALLOWED_CURRENCIES.includes(data.price.currency.toUpperCase()))
-    throw new Error(`Currency must be ${ALLOWED_CURRENCIES}`, { cause: { code: 400 } });
+  if (!data.price.currency || data.price.currency !== 'USD')
+    throw new Error('Catalog price must be USD', { cause: { code: 400 } });
 
   if (!Number.isFinite(data.price.amount) || data.price.amount <= 0)
     throw new Error('Price amount must be greater than 0', { cause: { code: 400 } });
@@ -359,11 +366,12 @@ export const createProductService = async (data, requester) => {
     throw new Error(`Weight unit must be ${valid_weight_units}`, { cause: { code: 400 } });
 
   const newProduct = {
+    ...translationCreate(data.translations, 'product'),
     name: data.name.trim(),
     seller_id: userStore.user,
     store_id: userStore._id,
-    category_id: validCategoryIds[0],   // primary (backward compat)
-    category_ids: validCategoryIds,     // ⭐ همه‌ی دسته‌ها
+    category_id: validCategoryIds[0], // primary (backward compat)
+    category_ids: validCategoryIds, // ⭐ همه‌ی دسته‌ها
     short_description: data.short_description.trim(),
     description: data.description,
     production: data.production,
@@ -374,9 +382,9 @@ export const createProductService = async (data, requester) => {
     },
     discount: data.discount
       ? {
-        percentage: data.discount.percentage,
-        expirationDate: data.discount.expirationDate,
-      }
+          percentage: data.discount.percentage,
+          expirationDate: data.discount.expirationDate,
+        }
       : null,
     stock: data.stock,
     stock_status: data.stock > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
@@ -409,10 +417,23 @@ export const createProductService = async (data, requester) => {
 // ─────────────────────────────────────────────
 export const getProductsService = async (filter = {}) => {
   let {
-    page = 1, limit = 10, desc,
-    seller_id, brand, name, min_production, max_production,
-    category_id, category_ids, stock_status, warranty, tags, currency, discount,
-    min_price, max_price,
+    page = 1,
+    limit = 10,
+    desc,
+    seller_id,
+    brand,
+    name,
+    min_production,
+    max_production,
+    category_id,
+    category_ids,
+    stock_status,
+    warranty,
+    tags,
+    currency,
+    discount,
+    min_price,
+    max_price,
   } = filter;
 
   limit = Number(limit) || 10;
@@ -451,8 +472,9 @@ export const getProductsService = async (filter = {}) => {
   );
 
   if (seller_id) products = products.filter((p) => p.seller_id?.toString() === String(seller_id));
-  if (brand) products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
-  if (name) products = products.filter((p) => p.name?.toLowerCase().includes(name.toLowerCase()));
+  if (brand)
+    products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
+  if (name) products = products.filter((p) => searchableName(p).includes(name.toLowerCase()));
 
   // ⭐ فیلتر category — با پشتیبانی از category_ids آرایه یا تک
   if (categoryFilterList.length > 0) {
@@ -467,16 +489,22 @@ export const getProductsService = async (filter = {}) => {
     });
   }
 
-  if (stock_status) products = products.filter((p) => p.stock_status?.toLowerCase().includes(stock_status.toLowerCase()));
+  if (stock_status)
+    products = products.filter((p) =>
+      p.stock_status?.toLowerCase().includes(stock_status.toLowerCase()),
+    );
   if (warranty !== undefined) {
     const w = warranty === 'true' || warranty === true;
     products = products.filter((p) => p.warranty === w);
   }
   if (tags) {
     const list = Array.isArray(tags) ? tags : [tags];
-    products = products.filter((p) => list.some((t) => p.tags?.some((x) => x.toLowerCase().includes(t.toLowerCase()))));
+    products = products.filter((p) =>
+      list.some((t) => searchableTags(p).some((x) => x.toLowerCase().includes(t.toLowerCase()))),
+    );
   }
-  if (currency) products = products.filter((p) => p.price?.currency?.toLowerCase() === currency.toLowerCase());
+  if (currency)
+    products = products.filter((p) => p.price?.currency?.toLowerCase() === currency.toLowerCase());
   if (discount) products = products.filter((p) => (p.discount?.percentage || 0) > 0);
   if (min_production) products = products.filter((p) => p.production >= Number(min_production));
   if (max_production) products = products.filter((p) => p.production <= Number(max_production));
@@ -505,12 +533,13 @@ export const getProductsService = async (filter = {}) => {
 
       const storeNameMap = new Map();
       for (const s of stores) {
-        storeNameMap.set(String(s._id), s.name);
+        storeNameMap.set(String(s._id), { name: s.name, translations: s.translations });
       }
 
       products = products.map((p) => ({
         ...p,
-        store_name: storeNameMap.get(String(p.store_id)) || null,
+        store_name: storeNameMap.get(String(p.store_id))?.name || null,
+        store_translations: storeNameMap.get(String(p.store_id))?.translations,
       }));
     } else {
       products = products.map((p) => ({ ...p, store_name: null }));
@@ -535,7 +564,8 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
   let targetSellerId = null;
   if (isAdmin) {
     if (sellerId) {
-      if (!ObjectId.isValid(sellerId)) throw new Error('Seller id is not valid', { cause: { code: 400 } });
+      if (!ObjectId.isValid(sellerId))
+        throw new Error('Seller id is not valid', { cause: { code: 400 } });
       targetSellerId = String(sellerId);
     }
   } else {
@@ -543,10 +573,24 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
   }
 
   let {
-    page = 1, limit = 10, desc,
-    brand, name, min_production, max_production,
-    category_id, category_ids, status, visibility, stock_status, warranty, tags, currency, discount,
-    min_price, max_price,
+    page = 1,
+    limit = 10,
+    desc,
+    brand,
+    name,
+    min_production,
+    max_production,
+    category_id,
+    category_ids,
+    status,
+    visibility,
+    stock_status,
+    warranty,
+    tags,
+    currency,
+    discount,
+    min_price,
+    max_price,
   } = filter;
 
   limit = Number(limit) || 10;
@@ -578,8 +622,9 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
   let products = await findProducts({}, isDesc, PERM_PROJECTION);
 
   if (targetSellerId) products = products.filter((p) => p.seller_id?.toString() === targetSellerId);
-  if (brand) products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
-  if (name) products = products.filter((p) => p.name?.toLowerCase().includes(name.toLowerCase()));
+  if (brand)
+    products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
+  if (name) products = products.filter((p) => searchableName(p).includes(name.toLowerCase()));
 
   if (categoryFilterList.length > 0) {
     products = products.filter((p) => {
@@ -593,18 +638,25 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
     });
   }
 
-  if (stock_status) products = products.filter((p) => p.stock_status?.toLowerCase().includes(stock_status.toLowerCase()));
+  if (stock_status)
+    products = products.filter((p) =>
+      p.stock_status?.toLowerCase().includes(stock_status.toLowerCase()),
+    );
   if (status) products = products.filter((p) => p.status?.toLowerCase() === status.toLowerCase());
-  if (visibility) products = products.filter((p) => p.visibility?.toLowerCase() === visibility.toLowerCase());
+  if (visibility)
+    products = products.filter((p) => p.visibility?.toLowerCase() === visibility.toLowerCase());
   if (warranty !== undefined) {
     const w = warranty === 'true' || warranty === true;
     products = products.filter((p) => p.warranty === w);
   }
   if (tags) {
     const list = Array.isArray(tags) ? tags : [tags];
-    products = products.filter((p) => list.some((t) => p.tags?.some((x) => x.toLowerCase().includes(t.toLowerCase()))));
+    products = products.filter((p) =>
+      list.some((t) => searchableTags(p).some((x) => x.toLowerCase().includes(t.toLowerCase()))),
+    );
   }
-  if (currency) products = products.filter((p) => p.price?.currency?.toLowerCase() === currency.toLowerCase());
+  if (currency)
+    products = products.filter((p) => p.price?.currency?.toLowerCase() === currency.toLowerCase());
   if (discount) products = products.filter((p) => (p.discount?.percentage || 0) > 0);
   if (min_production) products = products.filter((p) => p.production >= Number(min_production));
   if (max_production) products = products.filter((p) => p.production <= Number(max_production));
@@ -633,12 +685,13 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
 
       const storeNameMap = new Map();
       for (const s of stores) {
-        storeNameMap.set(String(s._id), s.name);
+        storeNameMap.set(String(s._id), { name: s.name, translations: s.translations });
       }
 
       products = products.map((p) => ({
         ...p,
-        store_name: storeNameMap.get(String(p.store_id)) || null,
+        store_name: storeNameMap.get(String(p.store_id))?.name || null,
+        store_translations: storeNameMap.get(String(p.store_id))?.translations,
       }));
     } else {
       products = products.map((p) => ({ ...p, store_name: null }));
@@ -656,8 +709,7 @@ export const getProductService = async (id) => {
     throw new Error('Invalid product id', { cause: { code: 400 } });
 
   const product = await findOneProduct({ _id: id });
-  if (!product)
-    throw new Error('Product not found', { cause: { code: 404 } });
+  if (!product) throw new Error('Product not found', { cause: { code: 404 } });
 
   if (product.status !== 'ACTIVE' || product.visibility !== 'PUBLIC')
     throw new Error('Product not found', { cause: { code: 404 } });
@@ -669,28 +721,24 @@ export const getProductService = async (id) => {
 // getProductPermService
 // ─────────────────────────────────────────────
 export const getProductPermService = async (id, requester) => {
-  if (!requester)
-    throw new Error('Authentication required', { cause: { code: 401 } });
+  if (!requester) throw new Error('Authentication required', { cause: { code: 401 } });
 
   const isAdmin = requester.role === 'admin';
   const isSeller = requester.is_seller === true;
-  if (!isAdmin && !isSeller)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isSeller) throw new Error('No Access', { cause: { code: 403 } });
 
   if (!id || typeof id !== 'string' || id.length !== 24 || !ObjectId.isValid(id))
     throw new Error('Invalid product id', { cause: { code: 400 } });
 
   const product = await findOneProduct({ _id: id });
-  if (!product)
-    throw new Error('Product not found', { cause: { code: 404 } });
+  if (!product) throw new Error('Product not found', { cause: { code: 404 } });
 
   if (isAdmin) return product;
 
   const isOwner = product.seller_id?.toString() === requester._id.toString();
   if (isOwner) return product;
 
-  if (product.status === 'ACTIVE' && product.visibility === 'PUBLIC')
-    return product;
+  if (product.status === 'ACTIVE' && product.visibility === 'PUBLIC') return product;
 
   throw new Error('Product not found', { cause: { code: 404 } });
 };
@@ -709,9 +757,7 @@ export const getProductPermService = async (id, requester) => {
 // ─────────────────────────────────────────────
 const toBool = (v) => v === true || v === 'true' || v === '1' || v === 1;
 const listOf = (v) =>
-  (Array.isArray(v) ? v : String(v ?? '').split(','))
-    .map((x) => String(x).trim())
-    .filter(Boolean);
+  (Array.isArray(v) ? v : String(v ?? '').split(',')).map((x) => String(x).trim()).filter(Boolean);
 const effectivePrice = (p) => {
   const amount = Number(p.price?.amount);
   if (!Number.isFinite(amount)) return null;
@@ -721,10 +767,27 @@ const effectivePrice = (p) => {
 
 export const searchStoresByProductService = async (filter = {}) => {
   const {
-    q, name, brand, category_id, category_ids, tags, currency, discount,
-    in_stock, stock_status, warranty, min_price, max_price,
-    min_production, max_production, verified, min_products,
-    sort = 'relevance', page = 1, limit = 20, products_per_store = 6,
+    q,
+    name,
+    brand,
+    category_id,
+    category_ids,
+    tags,
+    currency,
+    discount,
+    in_stock,
+    stock_status,
+    warranty,
+    min_price,
+    max_price,
+    min_production,
+    max_production,
+    verified,
+    min_products,
+    sort = 'relevance',
+    page = 1,
+    limit = 20,
+    products_per_store = 6,
   } = filter;
 
   /* q/name اختیاری است: بدون آن، فروشگاه‌ها بر اساس بقیه‌ی فیلترها (مثل دسته‌بندی) و در نبود هر فیلتر، همه‌ی فروشگاه‌های فعال برمی‌گردند */
@@ -733,10 +796,20 @@ export const searchStoresByProductService = async (filter = {}) => {
   const pageNum = Number(page) || 1;
   const limitNum = Number(limit) || 20;
   const perStore = Math.min(20, Math.max(1, Number(products_per_store) || 6));
-  if (limitNum < 1 || limitNum > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
+  if (limitNum < 1 || limitNum > 100)
+    throw new Error('Limit is not valid', { cause: { code: 400 } });
   if (pageNum < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
 
-  const SORTS = ['relevance', 'products', 'newest', 'oldest', 'name', 'price_asc', 'price_desc', 'trust'];
+  const SORTS = [
+    'relevance',
+    'products',
+    'newest',
+    'oldest',
+    'name',
+    'price_asc',
+    'price_desc',
+    'trust',
+  ];
   const sortKey = SORTS.includes(sort) ? sort : 'relevance';
 
   // همه‌ی کلمات جستجو باید در نام/برند/برچسب کالا باشند (جستجوی چندکلمه‌ای)
@@ -753,22 +826,35 @@ export const searchStoresByProductService = async (filter = {}) => {
     if (ObjectId.isValid(cid) && !categoryFilterList.includes(cid)) categoryFilterList.push(cid);
   }
 
-  let products = await findProducts(
-    { status: 'ACTIVE', visibility: 'PUBLIC' },
-    false,
-    {
-      _id: 1, name: 1, brand: 1, store_id: 1, seller_id: 1, images_id: 1,
-      price: 1, discount: 1, stock: 1, stock_status: 1, rating: 1, tags: 1,
-      category_id: 1, category_ids: 1, production: 1, warranty: 1, create_at: 1,
-    },
-  );
+  let products = await findProducts({ status: 'ACTIVE', visibility: 'PUBLIC' }, false, {
+    _id: 1,
+    name: 1,
+    translations: 1,
+    brand: 1,
+    store_id: 1,
+    seller_id: 1,
+    images_id: 1,
+    price: 1,
+    discount: 1,
+    stock: 1,
+    stock_status: 1,
+    rating: 1,
+    tags: 1,
+    category_id: 1,
+    category_ids: 1,
+    production: 1,
+    warranty: 1,
+    create_at: 1,
+  });
 
   products = products.filter((p) => {
-    const hay = `${p.name || ''} ${p.brand || ''} ${(p.tags || []).join(' ')}`.toLowerCase();
+    const hay =
+      `${searchableName(p)} ${p.brand || ''} ${searchableTags(p).join(' ')}`.toLowerCase();
     return tokens.every((t) => hay.includes(t));
   });
 
-  if (brand) products = products.filter((p) => p.brand?.toLowerCase().includes(String(brand).toLowerCase()));
+  if (brand)
+    products = products.filter((p) => p.brand?.toLowerCase().includes(String(brand).toLowerCase()));
   if (categoryFilterList.length > 0) {
     products = products.filter((p) => {
       const cats =
@@ -783,13 +869,21 @@ export const searchStoresByProductService = async (filter = {}) => {
   const tagList = listOf(tags);
   if (tagList.length > 0)
     products = products.filter((p) =>
-      tagList.some((t) => p.tags?.some((x) => x.toLowerCase().includes(t.toLowerCase()))),
+      tagList.some((t) => searchableTags(p).some((x) => x.toLowerCase().includes(t.toLowerCase()))),
     );
-  if (currency) products = products.filter((p) => p.price?.currency?.toLowerCase() === String(currency).toLowerCase());
+  if (currency)
+    products = products.filter(
+      (p) => p.price?.currency?.toLowerCase() === String(currency).toLowerCase(),
+    );
   if (toBool(discount)) products = products.filter((p) => (p.discount?.percentage || 0) > 0);
-  if (toBool(in_stock)) products = products.filter((p) => p.stock_status === 'IN_STOCK' && (p.stock ?? 1) > 0);
-  if (stock_status) products = products.filter((p) => p.stock_status?.toLowerCase() === String(stock_status).toLowerCase());
-  if (warranty !== undefined && warranty !== '') products = products.filter((p) => Boolean(p.warranty) === toBool(warranty));
+  if (toBool(in_stock))
+    products = products.filter((p) => p.stock_status === 'IN_STOCK' && (p.stock ?? 1) > 0);
+  if (stock_status)
+    products = products.filter(
+      (p) => p.stock_status?.toLowerCase() === String(stock_status).toLowerCase(),
+    );
+  if (warranty !== undefined && warranty !== '')
+    products = products.filter((p) => Boolean(p.warranty) === toBool(warranty));
   if (min_price) products = products.filter((p) => p.price?.amount >= Number(min_price));
   if (max_price) products = products.filter((p) => p.price?.amount <= Number(max_price));
   if (min_production) products = products.filter((p) => p.production >= Number(min_production));
@@ -829,7 +923,9 @@ export const searchStoresByProductService = async (filter = {}) => {
   // با فیلتر: فقط فروشگاه‌هایی که کالای مطابق دارند. بدون هیچ فیلتر: همه‌ی فروشگاه‌های فعال
   let stores;
   if (hasProductFilter) {
-    const storeIds = [...new Set(products.map((p) => String(p.store_id)).filter((id) => ObjectId.isValid(id)))];
+    const storeIds = [
+      ...new Set(products.map((p) => String(p.store_id)).filter((id) => ObjectId.isValid(id))),
+    ];
     stores = await findStores({ _id: { $in: storeIds.map((id) => new ObjectId(id)) } });
   } else {
     stores = await findStores({ status: 'ENABLE' });
@@ -838,10 +934,19 @@ export const searchStoresByProductService = async (filter = {}) => {
   if (enabledStores.length === 0) return empty();
 
   // ─── اطلاعات عمومی فروشنده (اعتماد/فعال‌بودن) ───
-  const owners = await findUsersByIds(enabledStores.map((s) => s.user), {
-    _id: 1, firstname: 1, lastname: 1, username: 1,
-    seller_trust: 1, seller_active_status: 1, seller_approved_status: 1, create_at: 1,
-  });
+  const owners = await findUsersByIds(
+    enabledStores.map((s) => s.user),
+    {
+      _id: 1,
+      firstname: 1,
+      lastname: 1,
+      username: 1,
+      seller_trust: 1,
+      seller_active_status: 1,
+      seller_approved_status: 1,
+      create_at: 1,
+    },
+  );
   const ownerMap = new Map(owners.map((u) => [String(u._id), u]));
 
   enabledStores = enabledStores.filter((s) => {
@@ -851,7 +956,9 @@ export const searchStoresByProductService = async (filter = {}) => {
   if (enabledStores.length === 0) return empty();
 
   if (toBool(verified))
-    enabledStores = enabledStores.filter((s) => ownerMap.get(String(s.user))?.seller_trust === true);
+    enabledStores = enabledStores.filter(
+      (s) => ownerMap.get(String(s.user))?.seller_trust === true,
+    );
 
   // ─── گروه‌بندی کالاها به تفکیک فروشگاه ───
   const productsByStore = new Map();
@@ -900,7 +1007,10 @@ export const searchStoresByProductService = async (filter = {}) => {
     for (const p of productsByStore.get(String(s._id)) || [])
       if (p.brand) brandCount.set(p.brand, (brandCount.get(p.brand) || 0) + 1);
   const facets = {
-    brands: [...brandCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([value, count]) => ({ value, count })),
+    brands: [...brandCount.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([value, count]) => ({ value, count })),
     price: {
       min: allPrices.length ? Math.min(...allPrices) : null,
       max: allPrices.length ? Math.max(...allPrices) : null,
@@ -942,6 +1052,7 @@ export const searchStoresByProductService = async (filter = {}) => {
 // updateProductService
 // ─────────────────────────────────────────────
 export const updateProductService = async (id, data, requester) => {
+  data = deriveContent(data, 'product');
   if (!id || typeof id !== 'string' || id.length !== 24 || !ObjectId.isValid(id))
     throw new Error('Invalid product id', { cause: { code: 400 } });
 
@@ -954,19 +1065,18 @@ export const updateProductService = async (id, data, requester) => {
   const isOwner = product.seller_id?.toString() === requester._id.toString();
 
   if (!isAdmin && !isOwner) throw new Error('No Access', { cause: { code: 403 } });
+  if (data && Object.hasOwn(data, 'price'))
+    data = { ...data, price: await normalizeCatalogPrice(data.price) };
 
-  const ALLOWED_CURRENCIES = process.env.ALLOWED_CURRENCIES
-    ? process.env.ALLOWED_CURRENCIES.split(',')
-    : ['IRR'];
   const valid_stock_status = process.env.STOCK_STATUS
     ? process.env.STOCK_STATUS.split(',')
     : ['IN_STOCK', 'OUT_OF_STOCK'];
   const valid_status = process.env.PRODUCT_STATUS
     ? process.env.PRODUCT_STATUS.split(',').map((s) => s.toLowerCase())
-    : ['ACTIVE', 'INACTIVE'];
+    : ['active', 'inactive'];
   const valid_visibility = process.env.VISIBILITY
     ? process.env.VISIBILITY.split(',').map((s) => s.toLowerCase())
-    : ['PUBLIC', 'PRIVATE'];
+    : ['public', 'private'];
   const valid_dimension_units = process.env.DIMENSION_UNITS
     ? process.env.DIMENSION_UNITS.split(',')
     : ['CM', 'M'];
@@ -997,10 +1107,9 @@ export const updateProductService = async (id, data, requester) => {
     }
 
     if (inputCategoryIds.length > MAX_CATEGORIES_PER_PRODUCT)
-      throw new Error(
-        `category_ids cannot exceed ${MAX_CATEGORIES_PER_PRODUCT} items`,
-        { cause: { code: 400 } },
-      );
+      throw new Error(`category_ids cannot exceed ${MAX_CATEGORIES_PER_PRODUCT} items`, {
+        cause: { code: 400 },
+      });
 
     const seenCategoryIds = new Set();
     const validCategoryIds = [];
@@ -1084,11 +1193,8 @@ export const updateProductService = async (id, data, requester) => {
     if (typeof data.price !== 'object' || Array.isArray(data.price) || data.price === null)
       throw new Error('Price must be an object', { cause: { code: 400 } });
 
-    if (
-      data.price.currency !== undefined &&
-      !ALLOWED_CURRENCIES.includes(data.price.currency.toUpperCase())
-    )
-      throw new Error(`Currency must be ${ALLOWED_CURRENCIES}`, { cause: { code: 400 } });
+    if (data.price.currency !== undefined && data.price.currency !== 'USD')
+      throw new Error('Catalog price must be USD', { cause: { code: 400 } });
 
     if (
       data.price.amount !== undefined &&
@@ -1158,20 +1264,14 @@ export const updateProductService = async (id, data, requester) => {
     data.stock = 0;
   }
 
-  if (data.stock === 0 && data.stock_status === undefined)
-    data.stock_status = 'OUT_OF_STOCK';
+  if (data.stock === 0 && data.stock_status === undefined) data.stock_status = 'OUT_OF_STOCK';
 
-  if (
-    data.stock > 0 &&
-    data.stock_status === undefined &&
-    product.stock_status === 'OUT_OF_STOCK'
-  )
+  if (data.stock > 0 && data.stock_status === undefined && product.stock_status === 'OUT_OF_STOCK')
     data.stock_status = 'IN_STOCK';
 
   if (
     data.status !== undefined &&
-    (typeof data.status !== 'string' ||
-      !valid_status.includes(data.status.toLowerCase()))
+    (typeof data.status !== 'string' || !valid_status.includes(data.status.toLowerCase()))
   )
     throw new Error(`Status must be ${valid_status}`, { cause: { code: 400 } });
 
@@ -1214,10 +1314,7 @@ export const updateProductService = async (id, data, requester) => {
       throw new Error('Dimensions must be an object', { cause: { code: 400 } });
 
     if (data.dimensions.width !== undefined) {
-      if (
-        typeof data.dimensions.width !== 'object' ||
-        Array.isArray(data.dimensions.width)
-      )
+      if (typeof data.dimensions.width !== 'object' || Array.isArray(data.dimensions.width))
         throw new Error('Dimensions width must be an object', { cause: { code: 400 } });
 
       if (!Number.isFinite(data.dimensions.width.value) || data.dimensions.width.value <= 0)
@@ -1232,10 +1329,7 @@ export const updateProductService = async (id, data, requester) => {
     }
 
     if (data.dimensions.height !== undefined) {
-      if (
-        typeof data.dimensions.height !== 'object' ||
-        Array.isArray(data.dimensions.height)
-      )
+      if (typeof data.dimensions.height !== 'object' || Array.isArray(data.dimensions.height))
         throw new Error('Dimensions height must be an object', { cause: { code: 400 } });
 
       if (!Number.isFinite(data.dimensions.height.value) || data.dimensions.height.value <= 0)
@@ -1262,6 +1356,7 @@ export const updateProductService = async (id, data, requester) => {
   }
 
   const updatedProduct = {
+    ...translationPatch(data.translations, 'product'),
     name: data.name !== undefined ? data.name.trim() : product.name,
 
     // ⭐ category_ids + category_id (primary)
@@ -1276,9 +1371,7 @@ export const updateProductService = async (id, data, requester) => {
     production: data.production !== undefined ? data.production : product.production,
     images_id: data.images_id !== undefined ? data.images_id : product.images_id,
     price: {
-      currency: data.price?.currency
-        ? data.price.currency.toUpperCase()
-        : product.price.currency,
+      currency: data.price?.currency ? data.price.currency.toUpperCase() : product.price.currency,
       amount: data.price?.amount !== undefined ? data.price.amount : product.price.amount,
     },
     discount:
@@ -1286,18 +1379,15 @@ export const updateProductService = async (id, data, requester) => {
         ? data.discount === null
           ? null
           : {
-            percentage: data.discount.percentage,
-            expirationDate: data.discount.expirationDate,
-          }
+              percentage: data.discount.percentage,
+              expirationDate: data.discount.expirationDate,
+            }
         : product.discount,
     stock: data.stock !== undefined ? data.stock : product.stock,
     stock_status:
-      data.stock_status !== undefined
-        ? data.stock_status.toUpperCase()
-        : product.stock_status,
+      data.stock_status !== undefined ? data.stock_status.toUpperCase() : product.stock_status,
     status: data.status !== undefined ? data.status.toLowerCase() : product.status,
-    visibility:
-      data.visibility !== undefined ? data.visibility.toLowerCase() : product.visibility,
+    visibility: data.visibility !== undefined ? data.visibility.toLowerCase() : product.visibility,
     warranty: data.warranty !== undefined ? data.warranty : product.warranty,
     brand: data.brand !== undefined ? data.brand.toLowerCase().trim() : product.brand,
     tags: data.tags !== undefined ? data.tags : product.tags,
@@ -1324,12 +1414,11 @@ export const updateProductService = async (id, data, requester) => {
       },
     },
     weight: {
-      value:
-        data.weight?.value !== undefined ? data.weight.value : product.weight?.value ?? null,
+      value: data.weight?.value !== undefined ? data.weight.value : (product.weight?.value ?? null),
       unit:
         data.weight?.unit !== undefined
           ? data.weight.unit.toUpperCase()
-          : product.weight?.unit ?? null,
+          : (product.weight?.unit ?? null),
     },
   };
 

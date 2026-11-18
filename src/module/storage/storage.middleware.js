@@ -45,7 +45,7 @@ const storate = multer.memoryStorage();
 
 export const uploadMiddleware = multer({
   storage: storate,
-  limits: { fileSize: process.env.MAX_MB_UPLOAD_SIZE * 1024 * 1024 },
+  limits: { fileSize: (Number(process.env.MAX_MB_UPLOAD_SIZE) > 0 ? Number(process.env.MAX_MB_UPLOAD_SIZE) : 10) * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
       cb(null, true);

@@ -1,3 +1,5 @@
+import { orderItemSnapshot } from '../fx/order-snapshot.service.js';
+import { rialSnapshot } from '../fx/fx.service.js';
 import { ObjectId } from 'mongodb';
 import { randomInt } from 'crypto';
 
@@ -175,8 +177,10 @@ export const createOrderService = async (data, requester) => {
     if (product.stock < cart[i].quantity)
       throw new Error(`Not enough stock for ${product.name}`, { cause: { code: 400 } });
 
-    const productCurrency = String(product.price?.currency || 'IRR').toUpperCase();
-    const productAmount = Number(product.price?.amount);
+    const sourcePrice = { currency: String(product.price?.currency || 'IRR').toUpperCase(), amount: Number(product.price?.amount) };
+    const lockedPrice = await rialSnapshot(sourcePrice);
+    const productCurrency = 'IRR';
+    const productAmount = lockedPrice.amount;
 
     if (!Number.isFinite(productAmount) || productAmount <= 0)
       throw new Error(`Product ${product.name} has invalid price`, { cause: { code: 400 } });
@@ -196,7 +200,7 @@ export const createOrderService = async (data, requester) => {
       new Date(product.discount.expirationDate) > new Date()
     ) {
       discountPercentage = product.discount.percentage;
-      discountAmount = productAmount * (discountPercentage / 100);
+      discountAmount = Math.round(productAmount * (discountPercentage / 100));
     }
 
     if (!groups.has(sellerKey)) {
@@ -210,15 +214,7 @@ export const createOrderService = async (data, requester) => {
     }
 
     const group = groups.get(sellerKey);
-    group.items.push({
-      product_id: product._id,
-      name: product.name,
-      brand: product.brand,
-      images_id: product.images_id,
-      price: { currency: productCurrency, amount: productAmount },
-      discount: { percentage: discountPercentage, amount: discountAmount },
-      quantity: cart[i].quantity,
-    });
+    group.items.push(orderItemSnapshot(product, { sourcePrice, lockedPrice, discountPercentage, discountAmount, quantity: cart[i].quantity }));
     group.amount += productAmount * cart[i].quantity;
     group.discount_applied += discountAmount * cart[i].quantity;
 
@@ -229,6 +225,9 @@ export const createOrderService = async (data, requester) => {
     if (stockMap.get(productKey).quantity > product.stock)
       throw new Error(`Not enough stock for ${product.name}`, { cause: { code: 400 } });
   }
+
+  const safeTotal = [...groups.values()].reduce((sum, group) => sum + group.amount, 0);
+  if (!Number.isSafeInteger(safeTotal) || safeTotal <= 0 || [...groups.values()].some(group => !Number.isSafeInteger(group.discount_applied))) throw new Error('Order amount is out of supported range', { cause: { code: 400 } });
 
   const decremented = [];
   try {

@@ -1,3 +1,5 @@
+import { deriveContent } from '../i18n/content.service.js';
+import { translationCreate, translationPatch, searchableName } from '../i18n/content.service.js';
 import { ObjectId } from 'mongodb';
 
 import { emailValidator } from '../../utils/validators/email.validator.js';
@@ -18,6 +20,7 @@ import { findOnePlan } from '../../model/controller/plan.controller.js';
 // createStoreService
 // ─────────────────────────────────────────────
 export const createStoreService = async (user, data, requester) => {
+  data = deriveContent(data, 'store');
   if (user._id.toString() !== requester._id.toString() && requester.role !== 'admin')
     throw new Error('Access Denied', { cause: { code: 400 } });
 
@@ -116,6 +119,7 @@ export const createStoreService = async (user, data, requester) => {
     throw new Error('name is too long (max length is 50)', { cause: { code: 400 } });
 
   const newStore = {
+    ...translationCreate(data.translations, 'store'),
     user: user._id,
     name: data?.name,
     status: 'ENABLE',
@@ -150,7 +154,7 @@ export const getStoresService = async (filter = {}) => {
 
   let stores = await findStores(query, desc);
 
-  if (name) stores = stores.filter((s) => s.name?.includes(name));
+  if (name) stores = stores.filter((s) => searchableName(s).includes(String(name).toLowerCase()));
   if (email) stores = stores.filter((s) => s.contact_info?.email?.includes(email));
   if (phone) stores = stores.filter((s) => s.contact_info?.phone?.includes(phone));
 
@@ -198,7 +202,7 @@ export const getStoresPermService = async (userId, requester, filter = {}) => {
 
   let stores = await findStores(query, desc);
 
-  if (name) stores = stores.filter((s) => s.name?.includes(name));
+  if (name) stores = stores.filter((s) => searchableName(s).includes(String(name).toLowerCase()));
   if (status) stores = stores.filter((s) => s.status === status);
   if (email) stores = stores.filter((s) => s.contact_info?.email?.includes(email));
   if (phone) stores = stores.filter((s) => s.contact_info?.phone?.includes(phone));
@@ -260,6 +264,7 @@ export const getStorePermService = async (storeId, requester) => {
 // updateStoreService
 // ─────────────────────────────────────────────
 export const updateStoreService = async (id, data, requester) => {
+  data = deriveContent(data, 'store');
   if (!ObjectId.isValid(id))
     throw new Error('Store id is not valid', { cause: { code: 400 } });
 
@@ -369,6 +374,7 @@ export const updateStoreService = async (id, data, requester) => {
   await updateOneStore(
     { _id: id },
     {
+      ...translationPatch(data.translations, 'store'),
       name: name ?? store.name,
       status: status ?? store.status,
       profile_image_id: profile_image_id ?? store.profile_image_id,

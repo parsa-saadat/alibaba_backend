@@ -1,3 +1,6 @@
+import { deriveContent } from '../i18n/content.service.js';
+import { normalizeCatalogPrice } from '../fx/catalog-price.service.js';
+import { translationCreate, translationPatch, searchableName } from '../i18n/content.service.js';
 import { ObjectId } from 'mongodb';
 
 import {
@@ -8,15 +11,14 @@ import {
   updateOnePlan,
 } from '../../model/controller/plan.controller.js';
 
-const ALLOWED_CURRENCIES = process.env.ALLOWED_CURRENCIES
-  ? process.env.ALLOWED_CURRENCIES.split(',')
-  : ['IRR', 'IRT'];
-
 const featureFields = ['max_products', 'max_shops', 'max_images_per_product'];
 
 export const createPlanService = async (data, requester) => {
+  data = deriveContent(data, 'plan');
   if (!requester || requester.role !== 'admin')
     throw new Error('No Access', { cause: { code: 403 } });
+  if (data && Object.hasOwn(data, 'price'))
+    data = { ...data, price: await normalizeCatalogPrice(data.price) };
 
   if (!data || typeof data !== 'object' || Array.isArray(data))
     throw new Error('Data is not valid', { cause: { code: 400 } });
@@ -30,8 +32,7 @@ export const createPlanService = async (data, requester) => {
   if (typeof data.name !== 'string' || data.name.trim() === '')
     throw new Error('Name is not valid', { cause: { code: 400 } });
 
-  if (data.name.length > 50)
-    throw new Error('Name is too long', { cause: { code: 400 } });
+  if (data.name.length > 50) throw new Error('Name is too long', { cause: { code: 400 } });
 
   const checkPlan = await findOnePlan({ name: data.name });
 
@@ -46,12 +47,13 @@ export const createPlanService = async (data, requester) => {
   if (typeof data.price !== 'object' || Array.isArray(data.price) || data.price === null)
     throw new Error('Price is not valid', { cause: { code: 400 } });
 
-  if (!ALLOWED_CURRENCIES.includes(data.price.currency))
+  if (data.price.currency !== 'USD')
     throw new Error('Price currency is not valid', { cause: { code: 400 } });
 
-  const minimumAmount = data.price.currency === 'IRT' ? 1000 : 10000;
+  const minimumAmount =
+    data.price.currency === 'USD' ? 0.01 : data.price.currency === 'IRT' ? 1000 : 10000;
 
-  if (!Number.isInteger(data.price.amount) || data.price.amount < minimumAmount)
+  if (!Number.isFinite(data.price.amount) || data.price.amount < minimumAmount)
     throw new Error('Price amount is not valid', { cause: { code: 400 } });
 
   if (data.description !== undefined && typeof data.description !== 'string')
@@ -63,10 +65,7 @@ export const createPlanService = async (data, requester) => {
   if (data.status !== undefined && !['ACTIVE', 'INACTIVE'].includes(data.status))
     throw new Error('Status is not valid', { cause: { code: 400 } });
 
-  if (
-    data.sort_order !== undefined &&
-    (!Number.isInteger(data.sort_order) || data.sort_order < 0)
-  )
+  if (data.sort_order !== undefined && (!Number.isInteger(data.sort_order) || data.sort_order < 0))
     throw new Error('Sort order is not valid', { cause: { code: 400 } });
 
   if (data.discount !== undefined && data.discount !== null) {
@@ -92,8 +91,7 @@ export const createPlanService = async (data, requester) => {
 
   const isValidFeatures = featureFields.every((field) => data.features[field] !== undefined);
 
-  if (!isValidFeatures)
-    throw new Error('Features fields missing', { cause: { code: 400 } });
+  if (!isValidFeatures) throw new Error('Features fields missing', { cause: { code: 400 } });
 
   for (const field of featureFields) {
     if (!Number.isInteger(data.features[field]) || data.features[field] < 0)
@@ -101,13 +99,11 @@ export const createPlanService = async (data, requester) => {
   }
 
   if (data.is_featured === true) {
-    await updateOnePlan(
-      { is_featured: true },
-      { is_featured: false },
-    );
+    await updateOnePlan({ is_featured: true }, { is_featured: false });
   }
 
   const newPlan = {
+    ...translationCreate(data.translations, 'plan'),
     name: data.name,
     duration_days: data.duration_days,
     price: {
@@ -120,9 +116,9 @@ export const createPlanService = async (data, requester) => {
     sort_order: data.sort_order || 0,
     discount: data.discount
       ? {
-        percentage: data.discount.percentage,
-        expirationDate: data.discount.expirationDate,
-      }
+          percentage: data.discount.percentage,
+          expirationDate: data.discount.expirationDate,
+        }
       : null,
     features: {
       max_products: data.features.max_products,
@@ -174,8 +170,7 @@ export const getPlansService = async (filter = {}, requester) => {
 };
 
 export const getPlanService = async (id, requester) => {
-  if (!ObjectId.isValid(id))
-    throw new Error('Plan id is not valid', { cause: { code: 400 } });
+  if (!ObjectId.isValid(id)) throw new Error('Plan id is not valid', { cause: { code: 400 } });
 
   const plan = await findOnePlan({ _id: id });
 
@@ -190,11 +185,13 @@ export const getPlanService = async (id, requester) => {
 };
 
 export const updatePlanService = async (id, data, requester) => {
+  data = deriveContent(data, 'plan');
   if (!requester || requester.role !== 'admin')
     throw new Error('No Access', { cause: { code: 403 } });
+  if (data && Object.hasOwn(data, 'price'))
+    data = { ...data, price: await normalizeCatalogPrice(data.price) };
 
-  if (!ObjectId.isValid(id))
-    throw new Error('Plan id is not valid', { cause: { code: 400 } });
+  if (!ObjectId.isValid(id)) throw new Error('Plan id is not valid', { cause: { code: 400 } });
 
   if (!data || typeof data !== 'object' || Array.isArray(data))
     throw new Error('Data is not valid', { cause: { code: 400 } });
@@ -203,14 +200,13 @@ export const updatePlanService = async (id, data, requester) => {
 
   if (!plan) throw new Error('Plan not found', { cause: { code: 404 } });
 
-  const newPlan = {};
+  const newPlan = translationPatch(data.translations, 'plan');
 
   if (data.name !== undefined) {
     if (typeof data.name !== 'string' || data.name.trim() === '')
       throw new Error('Name is not valid', { cause: { code: 400 } });
 
-    if (data.name.length > 50)
-      throw new Error('Name is too long', { cause: { code: 400 } });
+    if (data.name.length > 50) throw new Error('Name is too long', { cause: { code: 400 } });
 
     const checkPlan = await findOnePlan({ name: data.name });
 
@@ -234,12 +230,13 @@ export const updatePlanService = async (id, data, requester) => {
     if (typeof data.price !== 'object' || Array.isArray(data.price) || data.price === null)
       throw new Error('Price is not valid', { cause: { code: 400 } });
 
-    if (!ALLOWED_CURRENCIES.includes(data.price.currency))
+    if (data.price.currency !== 'USD')
       throw new Error('Price currency is not valid', { cause: { code: 400 } });
 
-    const minimumAmount = data.price.currency === 'IRT' ? 1000 : 10000;
+    const minimumAmount =
+      data.price.currency === 'USD' ? 0.01 : data.price.currency === 'IRT' ? 1000 : 10000;
 
-    if (!Number.isInteger(data.price.amount) || data.price.amount < minimumAmount)
+    if (!Number.isFinite(data.price.amount) || data.price.amount < minimumAmount)
       throw new Error('Price amount is not valid', { cause: { code: 400 } });
 
     newPlan.price = {
@@ -260,14 +257,10 @@ export const updatePlanService = async (id, data, requester) => {
       throw new Error('Is featured is not valid', { cause: { code: 400 } });
 
     if (data.is_featured === true) {
-      await updateOnePlan(
-        { is_featured: true },
-        { is_featured: false },
-      );
+      await updateOnePlan({ is_featured: true }, { is_featured: false });
     }
 
     newPlan.is_featured = data.is_featured;
-
   }
 
   if (data.status !== undefined) {
@@ -317,8 +310,7 @@ export const updatePlanService = async (id, data, requester) => {
 
     const isValidFeatures = featureFields.every((field) => data.features[field] !== undefined);
 
-    if (!isValidFeatures)
-      throw new Error('Features fields missing', { cause: { code: 400 } });
+    if (!isValidFeatures) throw new Error('Features fields missing', { cause: { code: 400 } });
 
     for (const field of featureFields) {
       if (!Number.isInteger(data.features[field]) || data.features[field] < 0)
@@ -335,18 +327,14 @@ export const updatePlanService = async (id, data, requester) => {
   if (Object.keys(newPlan).length === 0)
     throw new Error('No fields to update', { cause: { code: 400 } });
 
-  return await updateOnePlan(
-    { _id: id },
-    { ...newPlan },
-  );
+  return await updateOnePlan({ _id: id }, { ...newPlan });
 };
 
 export const deletePlanService = async (id, requester) => {
   if (!requester || requester.role !== 'admin')
     throw new Error('No Access', { cause: { code: 403 } });
 
-  if (!ObjectId.isValid(id))
-    throw new Error('Plan id is not valid', { cause: { code: 400 } });
+  if (!ObjectId.isValid(id)) throw new Error('Plan id is not valid', { cause: { code: 400 } });
 
   const plan = await findOnePlan({ _id: id });
 

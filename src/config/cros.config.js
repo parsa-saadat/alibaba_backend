@@ -9,7 +9,8 @@ const corsOptions = {
   methods: CORS_METHODS || 'GET,HEAD,PUT,PATCH,POST,DELETE',
   preflightContinue: false,
   optionsSuccessStatus: 200,
-  allowedHeaders: CORS_ALLOWED_HEADERS || 'Content-Type,Authorization',
+  allowedHeaders: [...new Set([...(CORS_ALLOWED_HEADERS || 'Content-Type,Authorization').split(',').map(h => h.trim()), 'Accept-Language', 'X-Language'])],
+  exposedHeaders: ['Content-Language'],
 };
 
 export default corsOptions;

@@ -1,3 +1,5 @@
+import { deriveContent } from '../i18n/content.service.js';
+import { translationCreate, translationPatch, searchableName } from '../i18n/content.service.js';
 import { ObjectId } from 'mongodb';
 
 import {
@@ -21,6 +23,7 @@ const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // createCategoryService
 // ─────────────────────────────────────────────
 export const createCategoryService = async (data, requester) => {
+  data = deriveContent(data, 'category');
   if (!requester || requester.role !== 'admin')
     throw new Error('No Access', { cause: { code: 403 } });
 
@@ -84,6 +87,7 @@ export const createCategoryService = async (data, requester) => {
     throw new Error('Path already exists', { cause: { code: 400 } });
 
   const newCategory = {
+    ...translationCreate(data.translations, 'category'),
     name: data.name.trim(),
     slug: data.slug,
     parent_id: parentId,
@@ -145,7 +149,9 @@ export const getCategoriesService = async (filter = {}, requester) => {
     if (typeof search !== 'string')
       throw new Error('Search must be string', { cause: { code: 400 } });
     if (search.trim()) {
-      query.name = { $regex: search.trim(), $options: 'i' };
+      const escaped = [...search.trim()].map(c => '.*+?^${}()|[]'.includes(c) || c.charCodeAt(0) === 92 ? String.fromCharCode(92) + c : c).join('');
+      query.$or = ['name', ...['en', 'fa', 'ar', 'tr'].map(l => `translations.${l}.name`)]
+        .map(field => ({ [field]: { $regex: escaped, $options: 'i' } }));
     }
   }
 
@@ -186,6 +192,7 @@ export const getCategoryService = async (id, requester) => {
 // updateCategoryService
 // ─────────────────────────────────────────────
 export const updateCategoryService = async (id, data, requester) => {
+  data = deriveContent(data, 'category');
   if (!requester || requester.role !== 'admin')
     throw new Error('No Access', { cause: { code: 403 } });
 
@@ -198,7 +205,7 @@ export const updateCategoryService = async (id, data, requester) => {
   const category = await findOneCategory({ _id: id });
   if (!category) throw new Error('Category not found', { cause: { code: 404 } });
 
-  const update = {};
+  const update = translationPatch(data.translations, 'category');
 
   // ─── name ───
   if (data.name !== undefined) {

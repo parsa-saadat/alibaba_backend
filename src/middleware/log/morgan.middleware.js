@@ -1,4 +1,5 @@
-import { createWriteStream } from 'fs';
+import { createWriteStream, mkdirSync } from 'fs';
+import { dirname } from 'path';
 
 import morgan from 'morgan';
 import { config } from 'dotenv';
@@ -8,7 +9,9 @@ config();
 
 const { STATUS, LOG_FILE_PATH } = process.env;
 
-const write = createWriteStream(LOG_FILE_PATH || './log/http.log', { flags: 'a' });
+const logPath = LOG_FILE_PATH || './log/http.log';
+mkdirSync(dirname(logPath), { recursive: true });
+const write = createWriteStream(logPath, { flags: 'a' });
 
 let morganMiddleware;
 
