@@ -11,7 +11,7 @@ import {
 import { deleteCarts, updateOneCart } from '../../model/controller/cart.controller.js';
 import { findOneFile } from '../../model/controller/storage.controller.js';
 import { findOneStore, findStores } from '../../model/controller/store.controller.js';
-import { findOneUser, updateOneUser } from '../../model/controller/user.controller.js';
+import { findOneUser, findUsersByIds, updateOneUser } from '../../model/controller/user.controller.js';
 import { findOneCategory } from '../../model/controller/category.controller.js';
 import { MarkdownValidator } from '../../utils/validators/markdown.validator.js';
 
@@ -697,90 +697,244 @@ export const getProductPermService = async (id, requester) => {
 
 // ─────────────────────────────────────────────
 // searchStoresByProductService
+// GET /product/stores — «تأمین‌کنندگان» (Suppliers) مثل علی‌بابا:
+// فروشگاه‌هایی که کالای جستجوشده را دارند، همراه با کالاهای مطابق و آمار هر فروشگاه.
+//
+// فیلتر محصول : q|name, brand, category_id, category_ids, tags, currency, discount,
+//               in_stock, stock_status, warranty, min_price, max_price,
+//               min_production, max_production
+// فیلتر فروشگاه: verified (فروشنده‌ی مورد اعتماد), min_products (حداقل کالای مطابق)
+// مرتب‌سازی   : sort = relevance | products | newest | oldest | name | price_asc | price_desc | trust
+// صفحه‌بندی    : page, limit (۱ تا ۱۰۰)، products_per_store (۱ تا ۲۰؛ پیش‌فرض ۶)
 // ─────────────────────────────────────────────
+const toBool = (v) => v === true || v === 'true' || v === '1' || v === 1;
+const listOf = (v) =>
+  (Array.isArray(v) ? v : String(v ?? '').split(','))
+    .map((x) => String(x).trim())
+    .filter(Boolean);
+const effectivePrice = (p) => {
+  const amount = Number(p.price?.amount);
+  if (!Number.isFinite(amount)) return null;
+  const pct = Number(p.discount?.percentage) || 0;
+  return pct > 0 ? Math.round(amount * (1 - pct / 100)) : amount;
+};
+
 export const searchStoresByProductService = async (filter = {}) => {
-  const { q, name, page = 1, limit = 20 } = filter;
+  const {
+    q, name, brand, category_id, category_ids, tags, currency, discount,
+    in_stock, stock_status, warranty, min_price, max_price,
+    min_production, max_production, verified, min_products,
+    sort = 'relevance', page = 1, limit = 20, products_per_store = 6,
+  } = filter;
+
+  /* q/name اختیاری است: بدون آن، فروشگاه‌ها بر اساس بقیه‌ی فیلترها (مثل دسته‌بندی) و در نبود هر فیلتر، همه‌ی فروشگاه‌های فعال برمی‌گردند */
   const queryText = String(q || name || '').trim();
 
-  if (!queryText) {
-    throw new Error('Search query (q or name) is required', { cause: { code: 400 } });
-  }
-
-  let pageNum = Number(page) || 1;
-  let limitNum = Number(limit) || 20;
+  const pageNum = Number(page) || 1;
+  const limitNum = Number(limit) || 20;
+  const perStore = Math.min(20, Math.max(1, Number(products_per_store) || 6));
   if (limitNum < 1 || limitNum > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
   if (pageNum < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
 
-  const needle = queryText.toLowerCase();
+  const SORTS = ['relevance', 'products', 'newest', 'oldest', 'name', 'price_asc', 'price_desc', 'trust'];
+  const sortKey = SORTS.includes(sort) ? sort : 'relevance';
 
-  const allProducts = await findProducts(
+  // همه‌ی کلمات جستجو باید در نام/برند/برچسب کالا باشند (جستجوی چندکلمه‌ای)
+  const tokens = queryText.toLowerCase().split(/\s+/).filter(Boolean);
+
+  // فیلتر دسته‌بندی (OR) مثل getProductsService
+  const categoryFilterList = [];
+  if (category_id) {
+    if (!ObjectId.isValid(category_id))
+      throw new Error('Category id is not valid', { cause: { code: 400 } });
+    categoryFilterList.push(String(category_id));
+  }
+  for (const cid of listOf(category_ids)) {
+    if (ObjectId.isValid(cid) && !categoryFilterList.includes(cid)) categoryFilterList.push(cid);
+  }
+
+  let products = await findProducts(
     { status: 'ACTIVE', visibility: 'PUBLIC' },
     false,
     {
-      _id: 1, name: 1, store_id: 1, images_id: 1, price: 1, discount: 1,
-      stock: 1, stock_status: 1, brand: 1,
-      category_id: 1, category_ids: 1,   // ⭐ هر دو
-      production: 1,
+      _id: 1, name: 1, brand: 1, store_id: 1, seller_id: 1, images_id: 1,
+      price: 1, discount: 1, stock: 1, stock_status: 1, rating: 1, tags: 1,
+      category_id: 1, category_ids: 1, production: 1, warranty: 1, create_at: 1,
     },
   );
 
-  const matchedProducts = allProducts.filter(
-    (p) => p.name && p.name.toLowerCase().includes(needle),
-  );
-
-  if (matchedProducts.length === 0) {
-    return {
-      data: [],
-      total: 0,
-      totalPages: 0,
-      search_query: queryText,
-      matched_products_count: 0,
-    };
-  }
-
-  const storeIds = [...new Set(matchedProducts.map((p) => String(p.store_id)).filter(Boolean))];
-
-  const stores = await findStores({
-    _id: { $in: storeIds.map((id) => new ObjectId(id)) },
+  products = products.filter((p) => {
+    const hay = `${p.name || ''} ${p.brand || ''} ${(p.tags || []).join(' ')}`.toLowerCase();
+    return tokens.every((t) => hay.includes(t));
   });
-  const enabledStores = stores.filter((s) => s.status === 'ENABLE');
 
-  if (enabledStores.length === 0) {
-    return {
-      data: [],
-      total: 0,
-      totalPages: 0,
-      search_query: queryText,
-      matched_products_count: matchedProducts.length,
-    };
+  if (brand) products = products.filter((p) => p.brand?.toLowerCase().includes(String(brand).toLowerCase()));
+  if (categoryFilterList.length > 0) {
+    products = products.filter((p) => {
+      const cats =
+        Array.isArray(p.category_ids) && p.category_ids.length > 0
+          ? p.category_ids.map(String)
+          : p.category_id
+            ? [String(p.category_id)]
+            : [];
+      return categoryFilterList.some((cid) => cats.includes(cid));
+    });
   }
+  const tagList = listOf(tags);
+  if (tagList.length > 0)
+    products = products.filter((p) =>
+      tagList.some((t) => p.tags?.some((x) => x.toLowerCase().includes(t.toLowerCase()))),
+    );
+  if (currency) products = products.filter((p) => p.price?.currency?.toLowerCase() === String(currency).toLowerCase());
+  if (toBool(discount)) products = products.filter((p) => (p.discount?.percentage || 0) > 0);
+  if (toBool(in_stock)) products = products.filter((p) => p.stock_status === 'IN_STOCK' && (p.stock ?? 1) > 0);
+  if (stock_status) products = products.filter((p) => p.stock_status?.toLowerCase() === String(stock_status).toLowerCase());
+  if (warranty !== undefined && warranty !== '') products = products.filter((p) => Boolean(p.warranty) === toBool(warranty));
+  if (min_price) products = products.filter((p) => p.price?.amount >= Number(min_price));
+  if (max_price) products = products.filter((p) => p.price?.amount <= Number(max_price));
+  if (min_production) products = products.filter((p) => p.production >= Number(min_production));
+  if (max_production) products = products.filter((p) => p.production <= Number(max_production));
 
-  const storeMap = new Map(enabledStores.map((s) => [String(s._id), s]));
+  /* آیا هیچ فیلتر محصولی اعمال نشده؟ آن‌وقت فروشگاه‌های بدون کالا هم نمایش داده می‌شوند */
+  const hasProductFilter =
+    tokens.length > 0 ||
+    Boolean(brand) ||
+    categoryFilterList.length > 0 ||
+    tagList.length > 0 ||
+    Boolean(currency) ||
+    toBool(discount) ||
+    toBool(in_stock) ||
+    Boolean(stock_status) ||
+    (warranty !== undefined && warranty !== '') ||
+    Boolean(min_price) ||
+    Boolean(max_price) ||
+    Boolean(min_production) ||
+    Boolean(max_production);
+
+  const empty = (extra = {}) => ({
+    data: [],
+    total: 0,
+    totalPages: 0,
+    page: pageNum,
+    limit: limitNum,
+    search_query: queryText,
+    matched_products_count: products.length,
+    facets: { brands: [], price: { min: null, max: null } },
+    ...extra,
+  });
+
+  if (products.length === 0 && hasProductFilter) return empty();
+
+  // ─── فروشگاه‌های فعال ───
+  // با فیلتر: فقط فروشگاه‌هایی که کالای مطابق دارند. بدون هیچ فیلتر: همه‌ی فروشگاه‌های فعال
+  let stores;
+  if (hasProductFilter) {
+    const storeIds = [...new Set(products.map((p) => String(p.store_id)).filter((id) => ObjectId.isValid(id)))];
+    stores = await findStores({ _id: { $in: storeIds.map((id) => new ObjectId(id)) } });
+  } else {
+    stores = await findStores({ status: 'ENABLE' });
+  }
+  let enabledStores = stores.filter((s) => s.status === 'ENABLE');
+  if (enabledStores.length === 0) return empty();
+
+  // ─── اطلاعات عمومی فروشنده (اعتماد/فعال‌بودن) ───
+  const owners = await findUsersByIds(enabledStores.map((s) => s.user), {
+    _id: 1, firstname: 1, lastname: 1, username: 1,
+    seller_trust: 1, seller_active_status: 1, seller_approved_status: 1, create_at: 1,
+  });
+  const ownerMap = new Map(owners.map((u) => [String(u._id), u]));
+
+  enabledStores = enabledStores.filter((s) => {
+    const owner = ownerMap.get(String(s.user));
+    return !(owner && String(owner.seller_active_status || '').toLowerCase() === 'inactive');
+  });
+  if (enabledStores.length === 0) return empty();
+
+  if (toBool(verified))
+    enabledStores = enabledStores.filter((s) => ownerMap.get(String(s.user))?.seller_trust === true);
+
+  // ─── گروه‌بندی کالاها به تفکیک فروشگاه ───
   const productsByStore = new Map();
-
-  for (const p of matchedProducts) {
+  for (const p of products) {
     const sid = String(p.store_id);
-    if (!storeMap.has(sid)) continue;
     if (!productsByStore.has(sid)) productsByStore.set(sid, []);
     productsByStore.get(sid).push(p);
   }
 
-  let result = enabledStores.map((s) => ({
-    ...s,
-    matched_products: productsByStore.get(String(s._id)) || [],
-  }));
+  let result = enabledStores.map((s) => {
+    const list = productsByStore.get(String(s._id)) || [];
+    const prices = list.map(effectivePrice).filter((x) => x !== null);
+    const owner = ownerMap.get(String(s.user));
+    return {
+      ...s,
+      seller: owner
+        ? {
+            _id: owner._id,
+            firstname: owner.firstname ?? null,
+            lastname: owner.lastname ?? null,
+            seller_trust: owner.seller_trust === true,
+            seller_active_status: owner.seller_active_status ?? null,
+            seller_approved_status: owner.seller_approved_status ?? null,
+            member_since: owner.create_at ?? null,
+          }
+        : null,
+      matched_count: list.length,
+      min_price: prices.length ? Math.min(...prices) : null,
+      max_price: prices.length ? Math.max(...prices) : null,
+      in_stock_count: list.filter((p) => p.stock_status === 'IN_STOCK').length,
+      has_discount: list.some((p) => (p.discount?.percentage || 0) > 0),
+      matched_products: list
+        .slice()
+        .sort((a, b) => (effectivePrice(a) ?? Infinity) - (effectivePrice(b) ?? Infinity))
+        .slice(0, perStore),
+    };
+  });
+
+  const minProducts = Number(min_products) || 0;
+  if (minProducts > 1) result = result.filter((s) => s.matched_count >= minProducts);
+
+  // ─── facet ها برای ساخت فیلتر در UI (قبل از صفحه‌بندی) ───
+  const allPrices = result.flatMap((s) => [s.min_price, s.max_price]).filter((x) => x !== null);
+  const brandCount = new Map();
+  for (const s of result)
+    for (const p of productsByStore.get(String(s._id)) || [])
+      if (p.brand) brandCount.set(p.brand, (brandCount.get(p.brand) || 0) + 1);
+  const facets = {
+    brands: [...brandCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([value, count]) => ({ value, count })),
+    price: {
+      min: allPrices.length ? Math.min(...allPrices) : null,
+      max: allPrices.length ? Math.max(...allPrices) : null,
+    },
+  };
+
+  // ─── مرتب‌سازی ───
+  const ts = (s) => new Date(s.create_at || 0).getTime();
+  const trustOf = (s) => (s.seller?.seller_trust ? 1 : 0);
+  const sorters = {
+    relevance: (a, b) => trustOf(b) - trustOf(a) || b.matched_count - a.matched_count,
+    products: (a, b) => b.matched_count - a.matched_count,
+    newest: (a, b) => ts(b) - ts(a),
+    oldest: (a, b) => ts(a) - ts(b),
+    name: (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fa'),
+    price_asc: (a, b) => (a.min_price ?? Infinity) - (b.min_price ?? Infinity),
+    price_desc: (a, b) => (b.max_price ?? -Infinity) - (a.max_price ?? -Infinity),
+    trust: (a, b) => trustOf(b) - trustOf(a) || b.matched_count - a.matched_count,
+  };
+  result.sort(sorters[sortKey]);
 
   const total = result.length;
   const totalPages = Math.ceil(total / limitNum);
   const start = (pageNum - 1) * limitNum;
-  result = result.slice(start, start + limitNum);
 
   return {
-    data: result,
+    data: result.slice(start, start + limitNum),
     total,
     totalPages,
+    page: pageNum,
+    limit: limitNum,
     search_query: queryText,
-    matched_products_count: matchedProducts.length,
+    matched_products_count: products.length,
+    facets,
   };
 };
 

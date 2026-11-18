@@ -55,7 +55,6 @@ export const sendLoginCodeService = async (data) => {
 
   // Generate OTP
   const code = generateOTP();
-  console.log(code)
   const codeHash = hashOTP(code);
 
   const sentAt = new Date();

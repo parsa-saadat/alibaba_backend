@@ -62,6 +62,16 @@ export const findUsers = async (field, desc) => {
   return await db.collection('users').find(field).toArray();
 };
 
+// یافتن چند کاربر با لیست id (برای لیست عمومی فروشگاه‌ها؛ فقط فیلدهای عمومی برگردانده می‌شود)
+export const findUsersByIds = async (ids = [], projection = null) => {
+  const list = [...new Set(ids.map(String))]
+    .filter((id) => ObjectId.isValid(id))
+    .map((id) => new ObjectId(id));
+  if (list.length === 0) return [];
+  const options = projection ? { projection } : {};
+  return await db.collection('users').find({ _id: { $in: list } }, options).toArray();
+};
+
 export const findOneUser = async (field) => {
   if (field?._id) {
     field._id = new ObjectId(field._id);
