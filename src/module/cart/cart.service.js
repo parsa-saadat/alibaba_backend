@@ -30,7 +30,11 @@ export const createCartService = async (userId, data, requester) => {
   if (data.quantity < 1)
     throw new Error('Quantity must be greater than 0', { cause: { code: 400 } });
 
-  if (checkProduct.stock_status !== 'IN_STOCK' || checkProduct.status !== "ACTIVE" || checkProduct.visibility !== "PUBLIC")
+  if (
+    checkProduct.stock_status !== 'IN_STOCK' ||
+    checkProduct.status !== 'ACTIVE' ||
+    checkProduct.visibility !== 'PUBLIC'
+  )
     throw new Error('Product is not available', { cause: { code: 400 } });
 
   if (checkProduct.quantity < data.quantity)
@@ -106,13 +110,16 @@ export const updateCartSsrvice = async (userId, product, data, requester) => {
 
   const checkProduct = await findOneProduct({ _id: product });
 
-  if (checkProduct.stock_status !== 'IN_STOCK' || checkProduct.status !== "ACTIVE" || checkProduct.visibility !== "PUBLIC")
+  if (
+    checkProduct.stock_status !== 'IN_STOCK' ||
+    checkProduct.status !== 'ACTIVE' ||
+    checkProduct.visibility !== 'PUBLIC'
+  )
     throw new Error('Product is not available', { cause: { code: 400 } });
-
 
   if (checkProduct.quantity < data.quantity)
     throw new Error('Quantity is not available', { cause: { code: 400 } });
-  console.log(product , requester._id)
+  console.log(product, requester._id);
   return await updateOneCart(
     { product_id: product, user_id: requester._id },
     { quantity: data.quantity },
@@ -122,8 +129,7 @@ export const updateCartSsrvice = async (userId, product, data, requester) => {
 export const deleteCartService = async (userId, product, requester) => {
   if (!ObjectId.isValid(userId)) throw new Error('User id is not valid', { cause: { code: 400 } });
 
-  if (userId !== requester._id)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (userId !== requester._id) throw new Error('No Access', { cause: { code: 403 } });
 
   if (!ObjectId.isValid(product))
     throw new Error('Product id is not valid', { cause: { code: 400 } });

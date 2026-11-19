@@ -1,6 +1,10 @@
 import express from 'express';
 
-import { loginController, sendCodeController, sessionController } from '../../module/auth/aurh.controller.js';
+import {
+  loginController,
+  sendCodeController,
+  sessionController,
+} from '../../module/auth/aurh.controller.js';
 import createLimiter from '../../middleware/safety/ratelimiter.middleware.js';
 import { authenticateToken } from '../../module/auth/auth.middleware.js';
 

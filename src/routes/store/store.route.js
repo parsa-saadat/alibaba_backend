@@ -1,3 +1,4 @@
+import { getStoreStatsController } from '../../module/store/store.controller.js';
 import express from 'express';
 
 import {
@@ -12,6 +13,7 @@ import {
 import { authenticateToken, authorizeRoles } from '../../module/store/store.middleware.js';
 
 const router = express.Router();
+router.get('/store/stats', authenticateToken, getStoreStatsController);
 
 router.post('/store', authenticateToken, createStoreController);
 
@@ -22,6 +24,7 @@ router.get('/perm/stores', authenticateToken, getStoresPermController);
 router.get('/store/:id', getStoreController);
 
 router.get('/perm/store/:storeId', authenticateToken, getStorePermController);
+
 
 router.put('/store/:id', authenticateToken, updateStoreController);
 

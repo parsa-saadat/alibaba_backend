@@ -1,21 +1,18 @@
-import {
-  findOneUser,
-  findUsers,
-  updateOneUser,
-} from '../../model/controller/user.controller.js';
+import { panelSearch } from '../../utils/helpers/panel-search.helper.js';
+import { statsActor } from '../../utils/helpers/stats.helper.js';
+import { sellerStats } from '../../model/controller/user.controller.js';
+import { findOneUser, findUsers, updateOneUser } from '../../model/controller/user.controller.js';
 
 import { nationalIDValidator } from '../../utils/validators/national_id.validator.js';
 import { cardNumberValidator } from '../../utils/validators/card_number.validator.js';
 import { shebaNumberValidator } from '../../utils/validators/sheba_number.validator.js';
 import { findOneFile } from '../../model/controller/storage.controller.js';
 
-const SELLER_TYPES = (
-  process.env.SELLER_TYPES || 'Individual_seller,institutional_seller'
-).split(',');
+const SELLER_TYPES = (process.env.SELLER_TYPES || 'Individual_seller,institutional_seller').split(
+  ',',
+);
 
-const ACCOUNT_TYPES = (
-  process.env.SETTLEMENT_ACCOUNT_TYPES || 'card'
-).split(',');
+const ACCOUNT_TYPES = (process.env.SETTLEMENT_ACCOUNT_TYPES || 'card').split(',');
 
 const IDENTITY_FIELDS = [
   'seller_type',
@@ -61,8 +58,7 @@ export const registerSellerService = async (data, requester) => {
     throw new Error('identity_image_id is required', { cause: { code: 400 } });
 
   const identity_image = await findOneFile({ _id: identity_image_id });
-  if (!identity_image)
-    throw new Error('identity image ID not found', { cause: { code: 404 } });
+  if (!identity_image) throw new Error('identity image ID not found', { cause: { code: 404 } });
 
   if (!identity_verification_image_id)
     throw new Error('identity_verification_image is required', { cause: { code: 400 } });
@@ -104,7 +100,7 @@ export const registerSellerService = async (data, requester) => {
   await updateOneUser(
     { _id: id },
     {
-      role: user.role !== "admin" ? "seller" : 'admin',
+      role: user.role !== 'admin' ? 'seller' : 'admin',
       is_seller: true,
       seller_active_status: 'INACTIVE',
       seller_approved_status: false,
@@ -123,7 +119,7 @@ export const registerSellerService = async (data, requester) => {
       },
       seller_plan: {
         plan_id: null,
-        start_at: new Date()
+        start_at: new Date(),
       },
     },
   );
@@ -158,6 +154,14 @@ export const getSellersService = async (filter = {}) => {
       (user) => user.seller_approved_status === (seller_approved_status === 'true'),
     );
 
+  if (filter.panel_filter === 'PENDING')
+    users = users.filter((user) => !user.seller_approved_status);
+  if (filter.panel_filter === 'APPROVED')
+    users = users.filter((user) => user.seller_approved_status);
+  if (filter.panel_filter === 'TRUSTED') users = users.filter((user) => user.seller_trust === true);
+  if (filter.panel_filter === 'INACTIVE')
+    users = users.filter((user) => String(user.seller_active_status).toLowerCase() !== 'active');
+  if (filter.search) users = users.filter((user) => panelSearch(user, filter.search));
   const total = users.length;
   const totalPages = Math.ceil(total / limit);
   const start = (page - 1) * limit;
@@ -179,8 +183,7 @@ export const getSellerService = async (id, requester) => {
   if (user._id.toString() !== requester._id.toString() && requester.role !== 'admin')
     throw new Error('Access Denied', { cause: { code: 400 } });
 
-  if (!user.is_seller)
-    throw new Error('User is not a seller', { cause: { code: 400 } });
+  if (!user.is_seller) throw new Error('User is not a seller', { cause: { code: 400 } });
 
   return user;
 };
@@ -192,13 +195,11 @@ export const updateSellerService = async (id, data, requester) => {
   if (user._id.toString() !== requester._id.toString() && requester.role !== 'admin')
     throw new Error('Access Denied', { cause: { code: 400 } });
 
-  if (!user.is_seller)
-    throw new Error('User is not a seller', { cause: { code: 400 } });
+  if (!user.is_seller) throw new Error('User is not a seller', { cause: { code: 400 } });
 
   const isAdmin = requester.role === 'admin';
 
-  const identityLocked =
-    user.identity_locked === true || user.seller_approved_status === true;
+  const identityLocked = user.identity_locked === true || user.seller_approved_status === true;
 
   if (!isAdmin && identityLocked) {
     for (const field of IDENTITY_FIELDS) {
@@ -240,13 +241,11 @@ export const updateSellerService = async (id, data, requester) => {
 
   if (identity_image_id) {
     const img = await findOneFile({ _id: identity_image_id });
-    if (!img)
-      throw new Error('identity image ID not found', { cause: { code: 404 } });
+    if (!img) throw new Error('identity image ID not found', { cause: { code: 404 } });
   }
   if (identity_verification_image_id) {
     const img = await findOneFile({ _id: identity_verification_image_id });
-    if (!img)
-      throw new Error('identity verification image ID not found', { cause: { code: 404 } });
+    if (!img) throw new Error('identity verification image ID not found', { cause: { code: 404 } });
   }
 
   let updated_settlement_account = user.settlement_account;
@@ -278,12 +277,13 @@ export const updateSellerService = async (id, data, requester) => {
     throw new Error('Only admin can change seller status', { cause: { code: 403 } });
 
   if (isAdmin) {
-    if (seller_active_status !== undefined &&
-      !['ACTIVE', 'INACTIVE'].includes(seller_active_status))
+    if (
+      seller_active_status !== undefined &&
+      !['ACTIVE', 'INACTIVE'].includes(seller_active_status)
+    )
       throw new Error('Invalid seller_active_status', { cause: { code: 400 } });
 
-    if (seller_approved_status !== undefined &&
-      typeof seller_approved_status !== 'boolean')
+    if (seller_approved_status !== undefined && typeof seller_approved_status !== 'boolean')
       throw new Error('Invalid seller_approved_status', { cause: { code: 400 } });
   }
 
@@ -315,8 +315,7 @@ export const updateSellerService = async (id, data, requester) => {
 
 export const trustSellerService = async (id, trust, requester) => {
   // فقط ادمین
-  if (requester.role !== 'admin')
-    throw new Error('Access Denied', { cause: { code: 403 } });
+  if (requester.role !== 'admin') throw new Error('Access Denied', { cause: { code: 403 } });
 
   // اعتبارسنجی ورودی: باید boolean باشه
   if (typeof trust !== 'boolean')
@@ -325,8 +324,7 @@ export const trustSellerService = async (id, trust, requester) => {
   const user = await findOneUser({ _id: id });
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
-  if (!user.is_seller)
-    throw new Error('User is not a seller', { cause: { code: 400 } });
+  if (!user.is_seller) throw new Error('User is not a seller', { cause: { code: 400 } });
 
   // (اختیاری) فقط seller تأییدشده رو بشه trust کرد
   if (trust === true && user.seller_approved_status !== true)
@@ -338,4 +336,13 @@ export const trustSellerService = async (id, trust, requester) => {
   await updateOneUser({ _id: id }, { seller_trust: trust });
 
   return true;
+};
+export const getSellerStatsService = async (requester) => {
+  const actor = await statsActor(requester, false);
+  const result = await sellerStats(
+    actor.role === 'admin'
+      ? { $or: [{ is_seller: true }, { role: 'seller' }] }
+      : { _id: actor._id },
+  );
+  return { ...result, scope: actor.role === 'admin' ? 'all' : 'own' };
 };

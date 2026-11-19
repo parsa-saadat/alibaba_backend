@@ -45,8 +45,7 @@ export const createAddressService = async (userId, data, requester) => {
 
   const user = await findOneUser({ _id: userId });
 
-  if (!user)
-    throw new Error('User not found', { cause: { code: 404 } });
+  if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
   if (data.address.is_default) {
     const address = await findAddress({ user: user._id, is_default: true });
@@ -55,7 +54,7 @@ export const createAddressService = async (userId, data, requester) => {
 
   const newAddress = await insertAddress({ user: user._id, ...data });
   let address = null;
-  console.log(user.address)
+  console.log(user.address);
   if (user.address) address = [...user.address, newAddress._id];
   else address = [newAddress._id];
 

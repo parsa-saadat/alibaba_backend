@@ -8,7 +8,7 @@ if (errors.length) {
   try {
     await import('./app.js');
   } catch (error) {
-    console.error('Backend could not start. Run npm run doctor for diagnostics.');
+    console.error('Backend could not start. Check the environment settings and server connection.');
     console.error(
       error.code === 'MONGODB_UNAVAILABLE'
         ? 'MongoDB is unreachable or authentication failed. Check MONGO_URI, server availability and network access.'

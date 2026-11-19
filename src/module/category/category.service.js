@@ -1,5 +1,12 @@
-import { deriveContent } from '../i18n/content.service.js';
-import { translationCreate, translationPatch, searchableName } from '../i18n/content.service.js';
+import { statsActor } from '../../utils/helpers/stats.helper.js';
+import { categoryStats } from '../../model/controller/category.controller.js';
+import {
+  deriveContent,
+  translationCreate,
+  translationPatch,
+  searchableName,
+} from '../../utils/helpers/localization.helper.js';
+
 import { ObjectId } from 'mongodb';
 
 import {
@@ -83,8 +90,7 @@ export const createCategoryService = async (data, requester) => {
 
   // ─── path یکتا در کل سیستم ───
   const pathExists = await findOneCategory({ path });
-  if (pathExists)
-    throw new Error('Path already exists', { cause: { code: 400 } });
+  if (pathExists) throw new Error('Path already exists', { cause: { code: 400 } });
 
   const newCategory = {
     ...translationCreate(data.translations, 'category'),
@@ -111,10 +117,8 @@ export const getCategoriesService = async (filter = {}, requester) => {
   limit = Number(limit) || 20;
   page = Number(page) || 1;
 
-  if (limit < 1 || limit > 100)
-    throw new Error('Limit is not valid', { cause: { code: 400 } });
-  if (page < 1)
-    throw new Error('Page is not valid', { cause: { code: 400 } });
+  if (limit < 1 || limit > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
+  if (page < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
 
   const isAdmin = requester && requester.role === 'admin';
 
@@ -149,9 +153,14 @@ export const getCategoriesService = async (filter = {}, requester) => {
     if (typeof search !== 'string')
       throw new Error('Search must be string', { cause: { code: 400 } });
     if (search.trim()) {
-      const escaped = [...search.trim()].map(c => '.*+?^${}()|[]'.includes(c) || c.charCodeAt(0) === 92 ? String.fromCharCode(92) + c : c).join('');
-      query.$or = ['name', ...['en', 'fa', 'ar', 'tr'].map(l => `translations.${l}.name`)]
-        .map(field => ({ [field]: { $regex: escaped, $options: 'i' } }));
+      const escaped = [...search.trim()]
+        .map((c) =>
+          '.*+?^${}()|[]'.includes(c) || c.charCodeAt(0) === 92 ? String.fromCharCode(92) + c : c,
+        )
+        .join('');
+      query.$or = ['en', 'fa', 'ar', 'tr']
+        .map((code) => `name.${code}`)
+        .map((field) => ({ [field]: { $regex: escaped, $options: 'i' } }));
     }
   }
 
@@ -294,8 +303,7 @@ export const updateCategoryService = async (id, data, requester) => {
     else siblingQuery.parent_id = null;
 
     const sibling = await findOneCategory(siblingQuery);
-    if (sibling)
-      throw new Error('Slug already exists under this parent', { cause: { code: 400 } });
+    if (sibling) throw new Error('Slug already exists under this parent', { cause: { code: 400 } });
   }
 
   // ─── محاسبه‌ی path جدید ───
@@ -313,9 +321,7 @@ export const updateCategoryService = async (id, data, requester) => {
     update.level = newLevel;
     update.path = newPath;
   } else if (slugChanged) {
-    const parentPath = category.path
-      ? category.path.split('/').slice(0, -1).join('/')
-      : '';
+    const parentPath = category.path ? category.path.split('/').slice(0, -1).join('/') : '';
     newPath = parentPath ? `${parentPath}/${finalSlug}` : finalSlug;
     update.path = newPath;
   }
@@ -326,8 +332,7 @@ export const updateCategoryService = async (id, data, requester) => {
       _id: { $ne: new ObjectId(id) },
       path: newPath,
     });
-    if (pathDup)
-      throw new Error('Path already exists', { cause: { code: 400 } });
+    if (pathDup) throw new Error('Path already exists', { cause: { code: 400 } });
   }
 
   if (Object.keys(update).length === 0)
@@ -345,11 +350,7 @@ export const updateCategoryService = async (id, data, requester) => {
       if (idIdx === -1) continue;
 
       const afterSelf = desc.ancestors.slice(idIdx + 1);
-      const newDescAncestors = [
-        ...newAncestors,
-        new ObjectId(id),
-        ...afterSelf,
-      ];
+      const newDescAncestors = [...newAncestors, new ObjectId(id), ...afterSelf];
 
       let newDescPath = desc.path;
       if (oldPath && desc.path && desc.path.startsWith(`${oldPath}/`)) {
@@ -389,8 +390,7 @@ export const deleteCategoryService = async (id, requester) => {
 
   // ─── has products? ───
   const product = await findOneProduct({ category_id: new ObjectId(id) });
-  if (product)
-    throw new Error('Cannot delete category with products', { cause: { code: 400 } });
+  if (product) throw new Error('Cannot delete category with products', { cause: { code: 400 } });
 
   await deleteOneCategory({ _id: id });
 
@@ -448,4 +448,10 @@ export const getCategoryTreeService = async (filter = {}, requester) => {
   }
 
   return { data: roots };
+};
+
+export const getCategoryStatsService = async (requester) => {
+  const actor = await statsActor(requester, true);
+  const result = await categoryStats({});
+  return { ...result, scope: actor.role === 'admin' ? 'all' : 'own' };
 };

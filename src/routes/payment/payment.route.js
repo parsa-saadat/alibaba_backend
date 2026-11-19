@@ -1,11 +1,14 @@
 import express from 'express';
 
 import { authenticateToken } from '../../module/user/user.middleware.js';
-import { payOrderController, payPlanController, verifyOrderPaymentController, verifyPlanPaymentController } from '../../module/payment/payment.controller.js';
-
+import {
+  payOrderController,
+  payPlanController,
+  verifyOrderPaymentController,
+  verifyPlanPaymentController,
+} from '../../module/payment/payment.controller.js';
 
 const router = express.Router();
-
 
 router.post('/order/:orderId/pay/', authenticateToken, payOrderController);
 

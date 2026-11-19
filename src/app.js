@@ -1,9 +1,9 @@
+import { domainDocument } from './utils/helpers/content-fields.helper.js';
 import fxRoutes from './routes/fx/fx.route.js';
-import translationRoutes from './routes/translation/translation.route.js';
 import './config/environment.js';
 import currencyFilter from './middleware/fx/currency.middleware.js';
 import i18nMiddleware from './middleware/i18n/i18n.middleware.js';
-import { languages, defaultLanguage } from './module/i18n/content.service.js';
+import { languages, defaultLanguage } from './utils/helpers/localization.helper.js';
 import { config } from 'dotenv';
 import express from 'express';
 import cors from 'cors';
@@ -24,6 +24,16 @@ app.use(i18nMiddleware);
 app.use(express.json({ limit: '1mb' }));
 
 app.use(express.urlencoded({ extended: false }));
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    const names = {};
+    for (const field of ['firstname', 'lastname'])
+      if (req.body[field] !== undefined) names[field] = req.body[field];
+    req.body = domainDocument(req.body);
+    Object.assign(req.body, names);
+  }
+  next();
+});
 
 app.use(helmet());
 
@@ -51,7 +61,6 @@ app.get('/i18n/languages', (req, res) =>
 );
 
 app.use('/fx', rateLimiter, fxRoutes);
-app.use('/i18n', translationRoutes);
 app.use(rateLimiter, currencyFilter, routes);
 app.use((req, res) =>
   res.status(404).json({ body: null, status: 404, success: false, message: 'Not found' }),

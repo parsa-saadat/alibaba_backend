@@ -1,7 +1,9 @@
-import { mongoTranslationUpdate } from '../../module/i18n/content.service.js';
+import { mongoTranslationUpdate } from '../../utils/helpers/localization.helper.js';
 import { ObjectId } from 'mongodb';
 
-import db from '../../config/mongodb.config.js';
+import database from '../../config/mongodb.config.js';
+import contentModel from '../content.model.js';
+const db = contentModel(database);
 
 export const insertStore = async (data) => {
   if (data?._id) data._id = new ObjectId(data._id);
@@ -76,4 +78,69 @@ export const deleteOneStore = async (field) => {
   const deleteStore = await db.collection('stores').deleteOne(field);
 
   return deleteStore;
+};
+// Stats is scoped before aggregation; no pagination is applied to totals.
+export const storeStats = async (ownerId) => {
+  const match = ownerId ? { user: new ObjectId(String(ownerId)) } : {};
+  const [counts, byStore] = await Promise.all([
+    database
+      .collection('stores')
+      .aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            all: { $sum: 1 },
+            ENABLE: { $sum: { $cond: [{ $eq: ['$status', 'ENABLE'] }, 1, 0] } },
+            DISABLE: { $sum: { $cond: [{ $eq: ['$status', 'DISABLE'] }, 1, 0] } },
+            ROOT_DISABLE: { $sum: { $cond: [{ $eq: ['$status', 'ROOT_DISABLE'] }, 1, 0] } },
+          },
+        },
+      ])
+      .toArray(),
+    database
+      .collection('stores')
+      .aggregate([
+        { $match: match },
+        {
+          $lookup: {
+            from: 'products',
+            let: { store: '$_id' },
+            pipeline: [
+              { $match: { $expr: { $eq: ['$store_id', '$$store'] } } },
+              {
+                $group: {
+                  _id: { $ifNull: ['$price.currency', 'IRR'] },
+                  count: { $sum: 1 },
+                  stock: { $sum: { $ifNull: ['$stock', 0] } },
+                  value: {
+                    $sum: {
+                      $multiply: [{ $ifNull: ['$stock', 0] }, { $ifNull: ['$price.amount', 0] }],
+                    },
+                  },
+                },
+              },
+            ],
+            as: 'products',
+          },
+        },
+        { $project: { _id: 1, products: 1 } },
+      ])
+      .toArray(),
+  ]);
+  const perStore = Object.fromEntries(
+    byStore.map((row) => [
+      String(row._id),
+      {
+        count: (row.products || []).reduce((sum, item) => sum + item.count, 0),
+        stock: (row.products || []).reduce((sum, item) => sum + item.stock, 0),
+        money: (row.products || []).map((item) => ({ currency: item._id, amount: item.value })),
+      },
+    ]),
+  );
+  return {
+    counts: { all: 0, ENABLE: 0, DISABLE: 0, ROOT_DISABLE: 0, ...counts[0] },
+    byStore: perStore,
+    products: Object.values(perStore).reduce((sum, row) => sum + row.count, 0),
+  };
 };

@@ -1,3 +1,5 @@
+import { duplicateProductController } from '../../module/product/product.controller.js';
+import { getProductStatsController } from '../../module/product/product.controller.js';
 import express from 'express';
 
 import {
@@ -13,6 +15,9 @@ import {
 import { authenticateToken, authorizeRoles } from '../../module/product/product.middleware.js';
 
 const router = express.Router();
+router.get('/product/stats', authenticateToken, getProductStatsController);
+
+router.post('/product/:id/duplicate', authenticateToken, duplicateProductController);
 
 router.post('/product', authenticateToken, createProductController);
 

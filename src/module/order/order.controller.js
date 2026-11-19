@@ -1,3 +1,4 @@
+import { getOrderStatsService } from './order.service.js';
 import {
   createOrderService,
   approveSubOrderService,
@@ -92,11 +93,7 @@ export const approveSubOrderController = async (req, res) => {
 
 export const cancelSubOrderController = async (req, res) => {
   try {
-    const sub = await cancelSubOrderService(
-      req.params.subOrderId,
-      req.body,
-      req.user,
-    );
+    const sub = await cancelSubOrderService(req.params.subOrderId, req.body, req.user);
     res.status(200).json({
       body: sub,
       status: 200,
@@ -115,11 +112,7 @@ export const cancelSubOrderController = async (req, res) => {
 
 export const updateSubOrderStatusController = async (req, res) => {
   try {
-    const sub = await updateSubOrderStatusService(
-      req.params.subOrderId,
-      req.body,
-      req.user,
-    );
+    const sub = await updateSubOrderStatusService(req.params.subOrderId, req.body, req.user);
     res.status(200).json({
       body: sub,
       status: 200,
@@ -159,11 +152,7 @@ export const getSubOrdersAllController = async (req, res) => {
 
 export const getSubOrdersController = async (req, res) => {
   try {
-    const subs = await getSubOrdersService(
-      req.params.parentId,
-      req.query,
-      req.user,
-    );
+    const subs = await getSubOrdersService(req.params.parentId, req.query, req.user);
     res.status(200).json({
       body: subs,
       status: 200,
@@ -197,5 +186,14 @@ export const getSubOrderController = async (req, res) => {
       message: e.message,
       success: false,
     });
+  }
+};
+export const getOrderStatsController = async (req, res) => {
+  try {
+    const stats = await getOrderStatsService(req.user, req.query.currency || 'USD');
+    res.json({ body: stats, success: true, status: 200 });
+  } catch (error) {
+    const status = error.cause?.code || 500;
+    res.status(status).json({ body: null, success: false, status, message: error.message });
   }
 };

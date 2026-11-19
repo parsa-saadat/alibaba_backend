@@ -1,11 +1,7 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 
-import {
-  findOneUser,
-  insertUser,
-  updateOneUser,
-} from '../../model/controller/user.controller.js';
+import { findOneUser, insertUser, updateOneUser } from '../../model/controller/user.controller.js';
 import { validateIRPhoneSyntax } from '../../utils/validators/phone.validator.js';
 
 // import { sendSms } from '../../utils/sendSms.js';
@@ -17,10 +13,7 @@ const generateOTP = () => {
 
 // Hash OTP
 const hashOTP = (code) => {
-  return crypto
-    .createHmac('sha256', process.env.OTP_SECRET)
-    .update(code)
-    .digest('hex');
+  return crypto.createHmac('sha256', process.env.OTP_SECRET).update(code).digest('hex');
 };
 
 // Compare OTP
@@ -28,10 +21,7 @@ const compareOTP = (code, hashedCode) => {
   const inputHash = Buffer.from(hashOTP(code), 'hex');
   const storedHash = Buffer.from(hashedCode, 'hex');
 
-  return (
-    inputHash.length === storedHash.length &&
-    crypto.timingSafeEqual(inputHash, storedHash)
-  );
+  return inputHash.length === storedHash.length && crypto.timingSafeEqual(inputHash, storedHash);
 };
 
 // Send Login Code
@@ -50,7 +40,11 @@ export const sendLoginCodeService = async (data) => {
   let user = await findOneUser({ phone });
   // Create user if not exists
   if (!user) {
-    user = await insertUser({ phone, username: `user_${crypto.randomBytes(5).toString('hex')}`, role: "user" });
+    user = await insertUser({
+      phone,
+      username: `user_${crypto.randomBytes(5).toString('hex')}`,
+      role: 'user',
+    });
   }
 
   // Generate OTP
@@ -60,7 +54,7 @@ export const sendLoginCodeService = async (data) => {
   const sentAt = new Date();
   const expiresAt = new Date(sentAt.getTime() + 5 * 60 * 1000);
 
-  console.log(user)
+  console.log(user);
 
   // Save authentication data
   await updateOneUser(
@@ -73,10 +67,9 @@ export const sendLoginCodeService = async (data) => {
     },
   );
 
-
-  if (process.env.STATUS == "DEV") {
-    console.log(code)
-    return code
+  if (process.env.STATUS == 'DEV') {
+    console.log(code);
+    return code;
   }
 
   // // Send SMS
@@ -94,7 +87,7 @@ export const sendLoginCodeService = async (data) => {
   // throw error;
   // }
 
-  return true
+  return true;
 };
 
 // Verify Login Code
@@ -109,8 +102,7 @@ export const verifyLoginCodeService = async (data) => {
   // Find user
   const user = await findOneUser({ phone });
 
-  if (!user)
-    throw new Error('User not found', { cause: { code: 404 } });
+  if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
   const auth = user.auth;
 
@@ -164,7 +156,13 @@ export const verifyLoginCodeService = async (data) => {
 
   // Generate JWT
   const token = jwt.sign(
-    { _id: user._id, role: user.role, phone: user.phone, username: user.username, is_seller: user.is_seller ? true : false },
+    {
+      _id: user._id,
+      role: user.role,
+      phone: user.phone,
+      username: user.username,
+      is_seller: user.is_seller ? true : false,
+    },
     process.env.JWT_SECRET,
     { expiresIn: '30d' },
   );
@@ -181,8 +179,7 @@ export const verifyLoginCodeService = async (data) => {
 };
 
 export const refreshSessionService = async (requester) => {
-  if (!requester?._id)
-    throw new Error('Authentication required', { cause: { code: 401 } });
+  if (!requester?._id) throw new Error('Authentication required', { cause: { code: 401 } });
 
   const user = await findOneUser({ _id: requester._id });
   if (!user) throw new Error('User not found', { cause: { code: 401 } });
@@ -205,4 +202,3 @@ export const refreshSessionService = async (requester) => {
 
   return { token, user: userData };
 };
-

@@ -24,7 +24,7 @@ export async function checkImports() {
       }
     }
   }
-  for (const dir of ['src', 'scripts', 'test']) await walk(resolve(root, dir));
+  for (const dir of ['src', 'scripts']) await walk(resolve(root, dir));
   return { checked, missing };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

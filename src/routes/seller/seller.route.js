@@ -1,9 +1,17 @@
+import { getSellerStatsController } from '../../module/seller/seller.controller.js';
 import express from 'express';
 
-import { getSellerController, getSellersController, registerSellerController, trustSellerController, updateSellerController } from '../../module/seller/seller.controller.js';
+import {
+  getSellerController,
+  getSellersController,
+  registerSellerController,
+  trustSellerController,
+  updateSellerController,
+} from '../../module/seller/seller.controller.js';
 import { authenticateToken, authorizeRoles } from '../../module/seller/seller.middleware.js';
 
 const router = express.Router();
+router.get('/seller/stats', authenticateToken, getSellerStatsController);
 
 router.post('/seller', authenticateToken, registerSellerController);
 

@@ -1,5 +1,7 @@
-import { mongoTranslationUpdate } from '../../module/i18n/content.service.js';
-import db from '../../config/mongodb.config.js';
+import { mongoTranslationUpdate } from '../../utils/helpers/localization.helper.js';
+import database from '../../config/mongodb.config.js';
+import contentModel from '../content.model.js';
+const db = contentModel(database);
 
 import { ObjectId } from 'mongodb';
 
@@ -83,4 +85,14 @@ export const deleteOneCategory = async (field) => {
   const deleteCategory = await db.collection('categories').deleteOne(field);
 
   return deleteCategory;
+};
+
+export const categoryStats = async (scope = {}) => {
+  const collection = database.collection('categories');
+  const keys = ['all', 'active', 'inactive', 'roots'];
+  const filters = [{}, { status: 'ACTIVE' }, { status: 'INACTIVE' }, { parent_id: null }];
+  const values = await Promise.all(
+    filters.map((filter) => collection.countDocuments({ $and: [scope, filter] })),
+  );
+  return { counts: Object.fromEntries(keys.map((key, index) => [key, values[index]])) };
 };

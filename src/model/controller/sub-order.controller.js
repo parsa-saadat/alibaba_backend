@@ -1,4 +1,6 @@
-import db from '../../config/mongodb.config.js';
+import database from '../../config/mongodb.config.js';
+import contentModel from '../content.model.js';
+const db = contentModel(database);
 
 import { ObjectId } from 'mongodb';
 
@@ -37,6 +39,7 @@ export const updateOneSubOrder = async (field, data) => {
 // find
 
 export const findSubOrders = async (field, desc) => {
+  if (typeof field?.seller_id === 'string') field.seller_id = new ObjectId(field.seller_id);
   if (field?._id && typeof field?._id === 'string') {
     field._id = new ObjectId(field._id);
   }

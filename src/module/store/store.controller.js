@@ -1,3 +1,4 @@
+import { getStoreStatsService } from './store.service.js';
 import { findOneUser } from '../../model/controller/user.controller.js';
 import {
   createStoreService,
@@ -77,13 +78,17 @@ export const getStoreController = async (req, res) => {
   try {
     const store = await getStoreService(req.params.id);
     res.status(200).json({
-      body: store, status: 200,
-      message: 'Store fetched successfully', success: true,
+      body: store,
+      status: 200,
+      message: 'Store fetched successfully',
+      success: true,
     });
   } catch (e) {
     res.status(e.cause?.code || 500).json({
-      body: null, status: e.cause?.code || 500,
-      message: e.message, success: false,
+      body: null,
+      status: e.cause?.code || 500,
+      message: e.message,
+      success: false,
     });
   }
 };
@@ -92,13 +97,17 @@ export const getStorePermController = async (req, res) => {
   try {
     const store = await getStorePermService(req.params.storeId, req.user);
     res.status(200).json({
-      body: store, status: 200,
-      message: 'Store fetched successfully', success: true,
+      body: store,
+      status: 200,
+      message: 'Store fetched successfully',
+      success: true,
     });
   } catch (e) {
     res.status(e.cause?.code || 500).json({
-      body: null, status: e.cause?.code || 500,
-      message: e.message, success: false,
+      body: null,
+      status: e.cause?.code || 500,
+      message: e.message,
+      success: false,
     });
   }
 };
@@ -138,5 +147,14 @@ export const deleteStoreController = async (req, res) => {
       message: e.message,
       success: false,
     });
+  }
+};
+export const getStoreStatsController = async (req, res) => {
+  try {
+    const stats = await getStoreStatsService(req.user, req.query.currency || 'USD');
+    res.json({ body: stats, success: true, status: 200 });
+  } catch (error) {
+    const status = error.cause?.code || 500;
+    res.status(status).json({ body: null, success: false, status, message: error.message });
   }
 };

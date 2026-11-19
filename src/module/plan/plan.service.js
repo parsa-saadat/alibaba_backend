@@ -1,6 +1,13 @@
-import { deriveContent } from '../i18n/content.service.js';
-import { normalizeCatalogPrice } from '../fx/catalog-price.service.js';
-import { translationCreate, translationPatch, searchableName } from '../i18n/content.service.js';
+import { statsActor } from '../../utils/helpers/stats.helper.js';
+import { planStats } from '../../model/controller/plan.controller.js';
+import {
+  deriveContent,
+  translationCreate,
+  translationPatch,
+  searchableName,
+} from '../../utils/helpers/localization.helper.js';
+import { normalizeCatalogPrice } from '../fx/fx.service.js';
+
 import { ObjectId } from 'mongodb';
 
 import {
@@ -343,4 +350,10 @@ export const deletePlanService = async (id, requester) => {
   await deleteOnePlan({ _id: id });
 
   return true;
+};
+
+export const getPlanStatsService = async (requester) => {
+  const actor = await statsActor(requester, true);
+  const result = await planStats({});
+  return { ...result, scope: actor.role === 'admin' ? 'all' : 'own' };
 };

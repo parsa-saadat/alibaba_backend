@@ -1,3 +1,7 @@
+import { panelSearch } from '../../utils/helpers/panel-search.helper.js';
+import { statsActor } from '../../utils/helpers/stats.helper.js';
+import { userStats } from '../../model/controller/user.controller.js';
+import { fieldDocument } from '../../utils/helpers/content-fields.helper.js';
 import { deleteAddress } from '../../model/controller/address.controller.js';
 import { deleteCarts } from '../../model/controller/cart.controller.js';
 import {
@@ -19,7 +23,17 @@ export const getUsersService = async (filter = {}) => {
 
   if (phone) users = users.filter((user) => user.phone.includes(phone));
   if (username) users = users.filter((user) => user.username.includes(username));
-  if (role) users = users.filter((user) => user.role === role);
+  if (role && role !== 'ALL')
+    users = users.filter((user) =>
+      role === 'seller'
+        ? user.is_seller || user.role === 'seller'
+        : role === 'admin'
+          ? ['admin', 'root'].includes(user.role)
+          : role === 'user'
+            ? !user.is_seller && !['admin', 'root', 'seller'].includes(user.role)
+            : user.role === role,
+    );
+  if (filter.search) users = users.filter((user) => panelSearch(user, filter.search));
 
   const total = users.length;
   const totalPages = Math.ceil(total / limit);
@@ -39,17 +53,15 @@ export const getUserService = async (id, requester) => {
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
   const isSelfOrAdmin =
-    requester &&
-    (user._id.toString() === requester._id.toString() ||
-      requester.role === 'admin');
+    requester && (user._id.toString() === requester._id.toString() || requester.role === 'admin');
 
   if (isSelfOrAdmin) return user;
 
   return {
     _id: user._id,
     username: user.username,
-    firstname: user.firstname,   // ← اگه مدل first_name هست، اینجا عوض کن
-    lastname: user.lastname,     // ← اگه مدل last_name هست، اینجا عوض کن
+    firstname: fieldDocument(user).firstname, // ← اگه مدل first_name هست، اینجا عوض کن
+    lastname: fieldDocument(user).lastname, // ← اگه مدل last_name هست، اینجا عوض کن
     is_seller: user.is_seller,
     seller_trust: user.seller_trust,
     seller_active_status: user.seller_active_status,
@@ -61,16 +73,12 @@ export const updateUserService = async (id, data, requester) => {
   const user = await findOneUser({ _id: id });
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
-  if (
-    user._id.toString() !== requester._id.toString() &&
-    requester.role !== 'admin'
-  )
+  if (user._id.toString() !== requester._id.toString() && requester.role !== 'admin')
     throw new Error('Access Denied', { cause: { code: 400 } });
 
   let { username, firstname, lastname, email } = data;
 
-  if (email && !emailValidator(email))
-    throw new Error('Invalid email', { cause: { code: 400 } });
+  if (email && !emailValidator(email)) throw new Error('Invalid email', { cause: { code: 400 } });
 
   if (username) {
     const existing = await findOneUser({ username });
@@ -88,13 +96,13 @@ export const updateUserService = async (id, data, requester) => {
     { _id: id },
     {
       username: username ?? user.username,
-      firstname: firstname ?? user.firstname,
-      lastname: lastname ?? user.lastname,
+      ...(Object.hasOwn(data, 'firstname') ? { firstname } : {}),
+      ...(Object.hasOwn(data, 'lastname') ? { lastname } : {}),
       email: email ?? user.email,
     },
   );
 
-  return true;
+  return await findOneUser({ _id: id });
 };
 
 export const deleteUserService = async (id, requester) => {
@@ -107,9 +115,15 @@ export const deleteUserService = async (id, requester) => {
 
   await deleteAddress({ user: id });
 
-  await deleteCarts({ user_id: id })
+  await deleteCarts({ user_id: id });
 
   await deleteOneUser({ _id: id });
 
   return user;
+};
+
+export const getUserStatsService = async (requester) => {
+  const actor = await statsActor(requester, true);
+  const result = await userStats({});
+  return { ...result, scope: actor.role === 'admin' ? 'all' : 'own' };
 };

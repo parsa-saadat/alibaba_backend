@@ -1,5 +1,6 @@
+import { languageMap, domainDocument, contentValue } from './content-fields.helper.js';
 import 'dotenv/config';
-import { MarkdownValidator } from '../../utils/validators/markdown.validator.js';
+import { MarkdownValidator } from '../validators/markdown.validator.js';
 export const languages = (process.env.SUPPORTED_LANGS || 'en,fa,ar,tr')
   .split(',')
   .map((l) => l.trim())
@@ -10,7 +11,7 @@ export const defaultLanguage = languages.includes(process.env.DEFAULT_LANG)
     ? 'en'
     : languages[0] || 'en';
 export const schemas = {
-  product: { name: 200, short_description: 500, description: 50000, tags: 20 },
+  product: { brand: 100, name: 200, short_description: 500, description: 50000, tags: 20 },
   category: { name: 100 },
   store: { name: 50, description: 255 },
   plan: { name: 50, description: 5000 },
@@ -77,11 +78,24 @@ export function translationCreate(value, type) {
 export function localize(value, lang) {
   if (Array.isArray(value)) return value.map((v) => localize(v, lang));
   if (!plain(value)) return value;
+  if (languageMap(value)) return contentValue(value, lang);
   const result = Object.fromEntries(
     Object.entries(value).map(([k, v]) => [k, k === 'translations' ? v : localize(v, lang)]),
   );
+  for (const field of [
+    'name',
+    'brand',
+    'description',
+    'short_description',
+    'tags',
+    'firstname',
+    'lastname',
+    'store_name',
+  ])
+    if (plain(value[field]) && !Object.keys(value[field]).length)
+      result[field] = field === 'tags' ? [] : '';
   if (plain(value.translations)) {
-    for (const field of ['name', 'short_description', 'description', 'tags']) {
+    for (const field of ['name', 'brand', 'short_description', 'description', 'tags']) {
       if (Object.hasOwn(value, field))
         result[field] =
           value.translations[lang]?.[field] ?? value.translations.en?.[field] ?? value[field];
@@ -120,7 +134,9 @@ export function searchableTags(value) {
 }
 
 export function deriveContent(data, type) {
-  if (!plain(data) || !Object.hasOwn(data, 'translations')) return data;
+  if (!plain(data)) return data;
+  data = domainDocument(data);
+  if (!Object.hasOwn(data, 'translations')) return data;
   translationPatch(data.translations, type);
   const result = { ...data };
   for (const field of Object.keys(schemas[type] || {})) {
@@ -132,4 +148,14 @@ export function deriveContent(data, type) {
       result[field] = typeof value === 'string' ? value.trim() : value;
   }
   return result;
+}
+
+export function searchableBrand(product) {
+  return [
+    product.brand,
+    ...Object.values(product.translations || {}).map((translation) => translation?.brand),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
 }

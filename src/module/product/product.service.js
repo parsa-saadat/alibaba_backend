@@ -1,11 +1,18 @@
-import { deriveContent } from '../i18n/content.service.js';
-import { normalizeCatalogPrice } from '../fx/catalog-price.service.js';
+import { panelSearch } from '../../utils/helpers/panel-search.helper.js';
+import { statsActor } from '../../utils/helpers/stats.helper.js';
+import { productStats } from '../../model/controller/product.controller.js';
+import { fieldDocument } from '../../utils/helpers/content-fields.helper.js';
 import {
+  searchableBrand,
+  deriveContent,
   translationCreate,
   translationPatch,
   searchableName,
   searchableTags,
-} from '../i18n/content.service.js';
+} from '../../utils/helpers/localization.helper.js';
+
+import { normalizeCatalogPrice } from '../fx/fx.service.js';
+
 import { ObjectId } from 'mongodb';
 
 import { findOnePlan } from '../../model/controller/plan.controller.js';
@@ -31,7 +38,6 @@ import { MarkdownValidator } from '../../utils/validators/markdown.validator.js'
 const LIST_PROJECTION = {
   _id: 1,
   name: 1,
-  translations: 1,
   tags: 1,
   brand: 1,
   price: 1,
@@ -59,7 +65,7 @@ const MAX_CATEGORIES_PER_PRODUCT = 10;
 // ─────────────────────────────────────────────
 // createProductService
 // ─────────────────────────────────────────────
-export const createProductService = async (data, requester) => {
+export const createProductService = async (data, requester, { duplicate = false } = {}) => {
   data = deriveContent(data, 'product');
   const user = await findOneUser({ _id: requester._id });
 
@@ -198,7 +204,7 @@ export const createProductService = async (data, requester) => {
     const maxProducts = userPlan.features.max_products;
     const existingProducts = await findProducts({ seller_id: user._id, status: 'ACTIVE' });
 
-    if (existingProducts.length >= maxProducts)
+    if (!duplicate && existingProducts.length >= maxProducts)
       throw new Error(`Your plan is limited to ${maxProducts} active products`, {
         cause: { code: 403 },
       });
@@ -388,10 +394,10 @@ export const createProductService = async (data, requester) => {
       : null,
     stock: data.stock,
     stock_status: data.stock > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
-    status: 'ACTIVE',
-    visibility: data.visibility.toUpperCase(),
+    status: duplicate ? 'INACTIVE' : 'ACTIVE',
+    visibility: duplicate ? 'PRIVATE' : data.visibility.toUpperCase(),
     warranty: data.warranty,
-    brand: data.brand.toLowerCase().trim(),
+    brand: data.brand.trim(),
     tags: data.tags || [],
     dimensions: {
       width: {
@@ -472,8 +478,7 @@ export const getProductsService = async (filter = {}) => {
   );
 
   if (seller_id) products = products.filter((p) => p.seller_id?.toString() === String(seller_id));
-  if (brand)
-    products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
+  if (brand) products = products.filter((p) => searchableBrand(p).includes(brand.toLowerCase()));
   if (name) products = products.filter((p) => searchableName(p).includes(name.toLowerCase()));
 
   // ⭐ فیلتر category — با پشتیبانی از category_ids آرایه یا تک
@@ -621,9 +626,17 @@ export const getProductsPermService = async (sellerId, requester, filter = {}) =
 
   let products = await findProducts({}, isDesc, PERM_PROJECTION);
 
+  if (filter.search) {
+    const matches = [];
+    for (const product of products) {
+      const owner = await findOneUser({ _id: String(product.seller_id) });
+      const store = await findOneStore({ _id: String(product.store_id) });
+      if (panelSearch([product, owner, store], filter.search)) matches.push(product);
+    }
+    products = matches;
+  }
   if (targetSellerId) products = products.filter((p) => p.seller_id?.toString() === targetSellerId);
-  if (brand)
-    products = products.filter((p) => p.brand?.toLowerCase().includes(brand.toLowerCase()));
+  if (brand) products = products.filter((p) => searchableBrand(p).includes(brand.toLowerCase()));
   if (name) products = products.filter((p) => searchableName(p).includes(name.toLowerCase()));
 
   if (categoryFilterList.length > 0) {
@@ -829,7 +842,6 @@ export const searchStoresByProductService = async (filter = {}) => {
   let products = await findProducts({ status: 'ACTIVE', visibility: 'PUBLIC' }, false, {
     _id: 1,
     name: 1,
-    translations: 1,
     brand: 1,
     store_id: 1,
     seller_id: 1,
@@ -849,7 +861,7 @@ export const searchStoresByProductService = async (filter = {}) => {
 
   products = products.filter((p) => {
     const hay =
-      `${searchableName(p)} ${p.brand || ''} ${searchableTags(p).join(' ')}`.toLowerCase();
+      `${searchableName(p)} ${searchableBrand(p)} ${searchableTags(p).join(' ')}`.toLowerCase();
     return tokens.every((t) => hay.includes(t));
   });
 
@@ -977,8 +989,8 @@ export const searchStoresByProductService = async (filter = {}) => {
       seller: owner
         ? {
             _id: owner._id,
-            firstname: owner.firstname ?? null,
-            lastname: owner.lastname ?? null,
+            firstname: fieldDocument(owner).firstname ?? null,
+            lastname: fieldDocument(owner).lastname ?? null,
             seller_trust: owner.seller_trust === true,
             seller_active_status: owner.seller_active_status ?? null,
             seller_approved_status: owner.seller_approved_status ?? null,
@@ -1355,6 +1367,9 @@ export const updateProductService = async (id, data, requester) => {
       throw new Error(`Weight unit must be ${valid_weight_units}`, { cause: { code: 400 } });
   }
 
+  if (data.store_id !== undefined && String(data.store_id) !== String(product.store_id)) {
+    throw new Error('Product store cannot be changed', { cause: { code: 400 } });
+  }
   const updatedProduct = {
     ...translationPatch(data.translations, 'product'),
     name: data.name !== undefined ? data.name.trim() : product.name,
@@ -1389,7 +1404,7 @@ export const updateProductService = async (id, data, requester) => {
     status: data.status !== undefined ? data.status.toLowerCase() : product.status,
     visibility: data.visibility !== undefined ? data.visibility.toLowerCase() : product.visibility,
     warranty: data.warranty !== undefined ? data.warranty : product.warranty,
-    brand: data.brand !== undefined ? data.brand.toLowerCase().trim() : product.brand,
+    brand: data.brand !== undefined ? data.brand.trim() : product.brand,
     tags: data.tags !== undefined ? data.tags : product.tags,
     dimensions: {
       width: {
@@ -1443,4 +1458,41 @@ export const deleteProductService = async (id, requester) => {
   await deleteOneProduct({ _id: id });
 
   return true;
+};
+
+export const getProductStatsService = async (requester) => {
+  const actor = await statsActor(requester, false);
+  const result = await productStats(actor.role === 'admin' ? {} : { seller_id: actor._id });
+  return { ...result, scope: actor.role === 'admin' ? 'all' : 'own' };
+};
+
+export const duplicateProductService = async (id, requester) => {
+  const actor = await statsActor(requester);
+  if (!ObjectId.isValid(id)) throw new Error('Invalid product id', { cause: { code: 400 } });
+  const source = await findOneProduct({ _id: id });
+  if (!source) throw new Error('Product not found', { cause: { code: 404 } });
+  if (actor.role !== 'admin' && String(source.seller_id) !== String(actor._id))
+    throw new Error('No Access', { cause: { code: 403 } });
+  const content = fieldDocument(source);
+  const data = {};
+  for (const field of [
+    'name',
+    'brand',
+    'short_description',
+    'description',
+    'tags',
+    'production',
+    'price',
+    'warranty',
+    'dimensions',
+    'weight',
+  ])
+    if (content[field] !== undefined) data[field] = structuredClone(content[field]);
+  data.store_id = String(source.store_id);
+  data.category_ids = (source.category_ids || [source.category_id]).filter(Boolean).map(String);
+  data.images_id = (source.images_id || []).map(String);
+  data.stock = 0;
+  data.visibility = 'private';
+  // Go through the same validation, access and subscription checks as a new product.
+  return await createProductService(data, actor, { duplicate: true });
 };

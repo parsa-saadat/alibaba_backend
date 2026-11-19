@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { envPath } from '../src/config/environment.js';
 try {
   await access(envPath);
-  console.log('.env already exists; not overwritten. Run npm run doctor.');
+  console.log('.env already exists; not overwritten.');
 } catch {
   const template = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
   await writeFile(

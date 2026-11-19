@@ -1,7 +1,8 @@
+import { fieldDocument } from '../../utils/helpers/content-fields.helper.js';
 import { displayPrices, displayCurrency, supportedCurrencies } from '../../module/fx/fx.service.js';
 import { createHash } from 'node:crypto';
-import { languages, localize, defaultLanguage } from '../../module/i18n/content.service.js';
-import { translateMessage } from '../../module/i18n/messages.js';
+import { languages, localize, defaultLanguage } from '../../utils/helpers/localization.helper.js';
+import { translateMessage } from '../../utils/helpers/localization.message.js';
 
 export function normalizeLanguage(value) {
   if (typeof value !== 'string') return null;
@@ -36,6 +37,7 @@ export default function i18nMiddleware(req, res, next) {
       let result =
         payload && typeof payload === 'object' ? JSON.parse(JSON.stringify(payload)) : payload;
       if (result && typeof result === 'object' && !Array.isArray(result)) {
+        if ('body' in result) result.body = fieldDocument(result.body);
         if ('body' in result && !req.rawLocale) {
           result.body = localize(result.body, req.locale);
           const target = req.displayCurrency || req.query.currency || displayCurrency(req.locale);
@@ -68,13 +70,6 @@ export default function i18nMiddleware(req, res, next) {
               false,
             );
             result.error_code = 'FX_UNAVAILABLE';
-          } else if (res.statusCode === 502 && result.error_code === 'TRANSLATION_FAILED') {
-            result.message = {
-              en: 'Translation service temporarily unavailable',
-              fa: 'سرویس ترجمه موقتاً در دسترس نیست؛ دوباره تلاش کنید',
-              ar: 'خدمة الترجمة غير متاحة مؤقتاً',
-              tr: 'Çeviri hizmeti geçici olarak kullanılamıyor',
-            }[req.locale];
           } else if (res.statusCode >= 500) {
             result.message = translateMessage(
               'Internal server error',

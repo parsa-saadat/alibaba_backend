@@ -9,7 +9,13 @@ const corsOptions = {
   methods: CORS_METHODS || 'GET,HEAD,PUT,PATCH,POST,DELETE',
   preflightContinue: false,
   optionsSuccessStatus: 200,
-  allowedHeaders: [...new Set([...(CORS_ALLOWED_HEADERS || 'Content-Type,Authorization').split(',').map(h => h.trim()), 'Accept-Language', 'X-Language'])],
+  allowedHeaders: [
+    ...new Set([
+      ...(CORS_ALLOWED_HEADERS || 'Content-Type,Authorization').split(',').map((h) => h.trim()),
+      'Accept-Language',
+      'X-Language',
+    ]),
+  ],
   exposedHeaders: ['Content-Language'],
 };
 

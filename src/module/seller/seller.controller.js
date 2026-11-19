@@ -1,3 +1,4 @@
+import { getSellerStatsService } from './seller.service.js';
 import {
   registerSellerService,
   getSellerService,
@@ -89,9 +90,7 @@ export const trustSellerController = async (req, res) => {
     res.status(200).json({
       body: seller,
       status: 200,
-      message: trust
-        ? 'Seller trusted successfully'
-        : 'Seller trust revoked successfully',
+      message: trust ? 'Seller trusted successfully' : 'Seller trust revoked successfully',
       success: true,
     });
   } catch (e) {
@@ -101,5 +100,14 @@ export const trustSellerController = async (req, res) => {
       message: e.message,
       success: false,
     });
+  }
+};
+export const getSellerStatsController = async (req, res) => {
+  try {
+    const stats = await getSellerStatsService(req.user, req.query.currency || 'USD');
+    res.json({ body: stats, success: true, status: 200 });
+  } catch (error) {
+    const status = error.cause?.code || 500;
+    res.status(status).json({ body: null, success: false, status, message: error.message });
   }
 };

@@ -37,7 +37,10 @@ export const payOrderService = async (orderId, requester) => {
 
   const parent = await findOneOrder({ _id: orderId });
   if (!parent) throw new Error('Order not found', { cause: { code: 404 } });
-  if (parent.currency !== 'IRR') throw new Error('Legacy non-IRR order requires explicit migration before payment', { cause: { code: 400 } });
+  if (parent.currency !== 'IRR')
+    throw new Error('Legacy non-IRR order requires explicit migration before payment', {
+      cause: { code: 400 },
+    });
 
   if (String(parent.customer_id) !== String(requester._id))
     throw new Error('Order access denied', { cause: { code: 403 } });
@@ -47,15 +50,13 @@ export const payOrderService = async (orderId, requester) => {
 
   // ─── Sub-orders ───
   const subs = await findSubOrders({ parent_order_id: orderId });
-  if (subs.length === 0)
-    throw new Error('No sub-orders found', { cause: { code: 404 } });
+  if (subs.length === 0) throw new Error('No sub-orders found', { cause: { code: 404 } });
 
   // ⭐ بدون چک "منتظر تصمیم فروشنده‌ها" — پرداخت فوری مجاز است
   // snapshot = همه‌ی subهای غیر-terminal (فروشنده ممکنه هنوز تصمیم نگرفته باشه)
   const payableSubs = subs.filter((s) => !EXCLUDED_FOR_PAYMENT.includes(s.status));
 
-  if (payableSubs.length === 0)
-    throw new Error('No payable sub-orders', { cause: { code: 400 } });
+  if (payableSubs.length === 0) throw new Error('No payable sub-orders', { cause: { code: 400 } });
 
   const totalAmount = payableSubs.reduce((sum, s) => sum + (s.amount || 0), 0);
   const totalDiscount = payableSubs.reduce((sum, s) => sum + (s.discount_applied || 0), 0);
@@ -93,14 +94,13 @@ export const payOrderService = async (orderId, requester) => {
       description: `Payment for order ${parent.order_number}`,
     });
   } catch (err) {
-    console.log(err.message , console.log(payableAmount))
+    console.log(err.message, console.log(payableAmount));
     throw new Error('Payment gateway is not available', { cause: { code: 502 } });
   }
 
   const authority = response?.data?.data?.authority;
 
-  if (!authority)
-    throw new Error('Failed to generate payment link', { cause: { code: 500 } });
+  if (!authority) throw new Error('Failed to generate payment link', { cause: { code: 500 } });
 
   // ⭐ ذخیره‌ی snapshot + amount برای verify
   await updateOneOrder(
@@ -129,19 +129,16 @@ export const verifyOrderPaymentService = async (data) => {
   if (!ZARINPAL_MERCHANT_ID || !ZARINPAL_VERIFY_PAYMENT_URL)
     throw new Error('Payment configuration is incomplete', { cause: { code: 500 } });
 
-  if (!orderId || !Authority || !Status)
-    throw new Error('Invalid data', { cause: { code: 400 } });
+  if (!orderId || !Authority || !Status) throw new Error('Invalid data', { cause: { code: 400 } });
 
-  if (Status === 'NOK')
-    throw new Error('Payment was cancelled by user', { cause: { code: 400 } });
+  if (Status === 'NOK') throw new Error('Payment was cancelled by user', { cause: { code: 400 } });
 
   if (Status !== 'OK')
     throw new Error(`Payment was not successful (Status: ${Status})`, {
       cause: { code: 400 },
     });
 
-  if (!ObjectId.isValid(orderId))
-    throw new Error('Invalid order id', { cause: { code: 400 } });
+  if (!ObjectId.isValid(orderId)) throw new Error('Invalid order id', { cause: { code: 400 } });
 
   const parent = await findOneOrder({ _id: orderId });
   if (!parent) throw new Error('Order not found', { cause: { code: 404 } });
@@ -306,8 +303,7 @@ export const payPlanService = async (planId, requester) => {
 
   const plan = await findOnePlan({ _id: planId });
   if (!plan) throw new Error('Plan not found', { cause: { code: 404 } });
-  if (plan.status !== 'ACTIVE')
-    throw new Error('Plan is not active', { cause: { code: 400 } });
+  if (plan.status !== 'ACTIVE') throw new Error('Plan is not active', { cause: { code: 400 } });
 
   const user = await findOneUser({ _id: requester._id });
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
@@ -345,7 +341,10 @@ export const payPlanService = async (planId, requester) => {
     throw new Error('Invalid payment amount', { cause: { code: 400 } });
 
   // ─── تبدیل IRT → IRR ───
-  const lockedPlanPrice = await rialSnapshot({ amount: finalAmount, currency: plan.price.currency });
+  const lockedPlanPrice = await rialSnapshot({
+    amount: finalAmount,
+    currency: plan.price.currency,
+  });
   const zarinpalAmount = lockedPlanPrice.amount;
 
   if (zarinpalAmount < 1000)
@@ -363,14 +362,12 @@ export const payPlanService = async (planId, requester) => {
       currency: 'IRR',
       description: `Payment for plan ${plan.name}`,
     });
-
   } catch (err) {
     throw new Error('Payment gateway is not available', { cause: { code: 502 } });
   }
 
   const authority = response?.data?.data?.authority;
-  if (!authority)
-    throw new Error('Failed to generate payment link', { cause: { code: 500 } });
+  if (!authority) throw new Error('Failed to generate payment link', { cause: { code: 500 } });
 
   // ⭐ ذخیره به‌صورت آبجکت واحد (overwrite)
   await updateOneUser(
@@ -400,11 +397,9 @@ export const verifyPlanPaymentService = async (data) => {
   if (!ZARINPAL_MERCHANT_ID || !ZARINPAL_VERIFY_PAYMENT_URL)
     throw new Error('Payment configuration is incomplete', { cause: { code: 500 } });
 
-  if (!Authority || !Status)
-    throw new Error('Invalid data', { cause: { code: 400 } });
+  if (!Authority || !Status) throw new Error('Invalid data', { cause: { code: 400 } });
 
-  if (Status === 'NOK')
-    throw new Error('Payment was cancelled by user', { cause: { code: 400 } });
+  if (Status === 'NOK') throw new Error('Payment was cancelled by user', { cause: { code: 400 } });
 
   if (Status !== 'OK')
     throw new Error(`Payment was not successful (Status: ${Status})`, {

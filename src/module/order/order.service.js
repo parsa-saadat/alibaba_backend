@@ -1,4 +1,7 @@
-import { orderItemSnapshot } from '../fx/order-snapshot.service.js';
+import { panelSearch } from '../../utils/helpers/panel-search.helper.js';
+import { statsActor, statsMoney } from '../../utils/helpers/stats.helper.js';
+import { orderStats } from '../../model/controller/order.controller.js';
+import { fieldDocument } from '../../utils/helpers/content-fields.helper.js';
 import { rialSnapshot } from '../fx/fx.service.js';
 import { ObjectId } from 'mongodb';
 import { randomInt } from 'crypto';
@@ -9,7 +12,12 @@ import { findOneAddress } from '../../model/controller/address.controller.js';
 import { findOneProduct, updateOneProduct } from '../../model/controller/product.controller.js';
 import { findOneStore } from '../../model/controller/store.controller.js';
 import { findOnePlan } from '../../model/controller/plan.controller.js';
-import { findOneOrder, findOrders, insertOrder, updateOneOrder } from '../../model/controller/order.controller.js';
+import {
+  findOneOrder,
+  findOrders,
+  insertOrder,
+  updateOneOrder,
+} from '../../model/controller/order.controller.js';
 import {
   findOneSubOrder,
   findSubOrders,
@@ -31,11 +39,7 @@ const CANCEL_PENALTY_PERCENTAGE = Number(process.env.CANCEL_PENALTY_PERCENTAGE) 
 
 const TERMINAL_STATUSES = ['delivered', 'cancelled', 'rejected', FINALIZED_STATUS];
 
-const CANCELLABLE_STATUSES = [
-  'awaiting_approval',
-  'preparing',
-  'ready_to_ship',
-];
+const CANCELLABLE_STATUSES = ['awaiting_approval', 'preparing', 'ready_to_ship'];
 
 const STATUS_TRANSITIONS = {
   awaiting_approval: ['preparing', 'rejected', 'cancelled'],
@@ -170,14 +174,19 @@ export const createOrderService = async (data, requester) => {
     }
     const seller = sellerCache.get(sellerKey);
 
-    const stockStatus = String(product.stock_status || '').toUpperCase().replace(/[\s_]/g, '_');
+    const stockStatus = String(product.stock_status || '')
+      .toUpperCase()
+      .replace(/[\s_]/g, '_');
     if (stockStatus !== 'IN_STOCK')
       throw new Error(`Product ${product.name} is not available`, { cause: { code: 400 } });
 
     if (product.stock < cart[i].quantity)
       throw new Error(`Not enough stock for ${product.name}`, { cause: { code: 400 } });
 
-    const sourcePrice = { currency: String(product.price?.currency || 'IRR').toUpperCase(), amount: Number(product.price?.amount) };
+    const sourcePrice = {
+      currency: String(product.price?.currency || 'IRR').toUpperCase(),
+      amount: Number(product.price?.amount),
+    };
     const lockedPrice = await rialSnapshot(sourcePrice);
     const productCurrency = 'IRR';
     const productAmount = lockedPrice.amount;
@@ -214,7 +223,15 @@ export const createOrderService = async (data, requester) => {
     }
 
     const group = groups.get(sellerKey);
-    group.items.push(orderItemSnapshot(product, { sourcePrice, lockedPrice, discountPercentage, discountAmount, quantity: cart[i].quantity }));
+    group.items.push(
+      orderItemSnapshot(product, {
+        sourcePrice,
+        lockedPrice,
+        discountPercentage,
+        discountAmount,
+        quantity: cart[i].quantity,
+      }),
+    );
     group.amount += productAmount * cart[i].quantity;
     group.discount_applied += discountAmount * cart[i].quantity;
 
@@ -227,7 +244,12 @@ export const createOrderService = async (data, requester) => {
   }
 
   const safeTotal = [...groups.values()].reduce((sum, group) => sum + group.amount, 0);
-  if (!Number.isSafeInteger(safeTotal) || safeTotal <= 0 || [...groups.values()].some(group => !Number.isSafeInteger(group.discount_applied))) throw new Error('Order amount is out of supported range', { cause: { code: 400 } });
+  if (
+    !Number.isSafeInteger(safeTotal) ||
+    safeTotal <= 0 ||
+    [...groups.values()].some((group) => !Number.isSafeInteger(group.discount_applied))
+  )
+    throw new Error('Order amount is out of supported range', { cause: { code: 400 } });
 
   const decremented = [];
   try {
@@ -237,10 +259,8 @@ export const createOrderService = async (data, requester) => {
         throw new Error(`Not enough stock for ${product.name}`, { cause: { code: 400 } });
 
       const newStock = fresh.stock - quantity;
-      if (newStock > 0)
-        await updateOneProduct({ _id: fresh._id }, { stock: newStock });
-      else
-        await updateOneProduct({ _id: fresh._id }, { stock: 0, stock_status: 'OUT_OF_STOCK' });
+      if (newStock > 0) await updateOneProduct({ _id: fresh._id }, { stock: newStock });
+      else await updateOneProduct({ _id: fresh._id }, { stock: 0, stock_status: 'OUT_OF_STOCK' });
 
       decremented.push({ product: fresh, quantity });
     }
@@ -401,14 +421,10 @@ export const approveSubOrderService = async (subOrderId, requester) => {
   const isAdmin = requester.role === 'admin';
   const isSeller = String(sub.seller_id) === String(requester._id);
 
-  if (!isAdmin && !isSeller)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isSeller) throw new Error('No Access', { cause: { code: 403 } });
 
   if (sub.status !== 'awaiting_approval')
-    throw new Error(
-      `Cannot approve sub-order in status: ${sub.status}`,
-      { cause: { code: 400 } },
-    );
+    throw new Error(`Cannot approve sub-order in status: ${sub.status}`, { cause: { code: 400 } });
 
   const now = new Date();
 
@@ -457,8 +473,7 @@ export const cancelSubOrderService = async (subOrderId, data, requester) => {
 
   const trimmedReason = reason.trim();
 
-  if (!trimmedReason)
-    throw new Error('Reason cannot be empty', { cause: { code: 400 } });
+  if (!trimmedReason) throw new Error('Reason cannot be empty', { cause: { code: 400 } });
 
   if (trimmedReason.length > MAX_REASON_LENGTH)
     throw new Error(`Reason cannot exceed ${MAX_REASON_LENGTH} characters`, {
@@ -480,8 +495,7 @@ export const cancelSubOrderService = async (subOrderId, data, requester) => {
   const isCustomer = String(sub.customer_id) === String(requester._id);
   const isSeller = String(sub.seller_id) === String(requester._id);
 
-  if (!isAdmin && !isCustomer && !isSeller)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isCustomer && !isSeller) throw new Error('No Access', { cause: { code: 403 } });
 
   if (TERMINAL_STATUSES.includes(sub.status))
     throw new Error(`Sub-order is already in terminal state: ${sub.status}`, {
@@ -489,10 +503,9 @@ export const cancelSubOrderService = async (subOrderId, data, requester) => {
     });
 
   if (!CANCELLABLE_STATUSES.includes(sub.status))
-    throw new Error(
-      `Cannot cancel sub-order in status: ${sub.status}. Contact support.`,
-      { cause: { code: 400 } },
-    );
+    throw new Error(`Cannot cancel sub-order in status: ${sub.status}. Contact support.`, {
+      cause: { code: 400 },
+    });
 
   let finalStatus;
   let cancelledBy;
@@ -614,7 +627,9 @@ export const cancelSubOrderService = async (subOrderId, data, requester) => {
       cancellation_summary: {
         cancelled_sub_orders: allSubs.filter((s) => s.status === 'cancelled').map((s) => s._id),
         rejected_sub_orders: allSubs.filter((s) => s.status === 'rejected').map((s) => s._id),
-        finalized_sub_orders: allSubs.filter((s) => s.status === FINALIZED_STATUS).map((s) => s._id),
+        finalized_sub_orders: allSubs
+          .filter((s) => s.status === FINALIZED_STATUS)
+          .map((s) => s._id),
         total_refunded: totalRefunded,
         pending_refund: pendingRefund,
       },
@@ -642,10 +657,9 @@ export const updateSubOrderStatusService = async (subOrderId, data, requester) =
   const validStatuses = ['preparing', 'ready_to_ship', 'shipped', 'delivered', FINALIZED_STATUS];
 
   if (!validStatuses.includes(newStatus))
-    throw new Error(
-      `Invalid status. Allowed: ${validStatuses.join(', ')}`,
-      { cause: { code: 400 } },
-    );
+    throw new Error(`Invalid status. Allowed: ${validStatuses.join(', ')}`, {
+      cause: { code: 400 },
+    });
 
   let note = null;
   if (data?.note !== undefined && data?.note !== null) {
@@ -675,8 +689,7 @@ export const updateSubOrderStatusService = async (subOrderId, data, requester) =
   const isAdmin = requester.role === 'admin';
   const isSeller = String(sub.seller_id) === String(requester._id);
 
-  if (!isAdmin && !isSeller)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isSeller) throw new Error('No Access', { cause: { code: 403 } });
 
   if (sub.status === FINALIZED_STATUS)
     throw new Error('Sub-order is finalized and cannot be changed', { cause: { code: 400 } });
@@ -692,10 +705,7 @@ export const updateSubOrderStatusService = async (subOrderId, data, requester) =
       );
 
     if (!STATUS_TRANSITIONS[sub.status]?.includes(newStatus))
-      throw new Error(
-        `Invalid transition: ${sub.status} → ${newStatus}`,
-        { cause: { code: 400 } },
-      );
+      throw new Error(`Invalid transition: ${sub.status} → ${newStatus}`, { cause: { code: 400 } });
   }
 
   const now = new Date();
@@ -791,7 +801,9 @@ export const updateSubOrderStatusService = async (subOrderId, data, requester) =
         cancellation_summary: {
           cancelled_sub_orders: allSubs.filter((s) => s.status === 'cancelled').map((s) => s._id),
           rejected_sub_orders: allSubs.filter((s) => s.status === 'rejected').map((s) => s._id),
-          finalized_sub_orders: allSubs.filter((s) => s.status === FINALIZED_STATUS).map((s) => s._id),
+          finalized_sub_orders: allSubs
+            .filter((s) => s.status === FINALIZED_STATUS)
+            .map((s) => s._id),
           total_refunded: totalRefunded,
           pending_refund: pendingRefund,
         },
@@ -802,7 +814,6 @@ export const updateSubOrderStatusService = async (subOrderId, data, requester) =
   return await findOneSubOrder({ _id: subOrderId });
 };
 
-
 export const getOrdersService = async (filter = {}, requester) => {
   if (!requester?._id || !ObjectId.isValid(requester._id))
     throw new Error('Authentication required', { cause: { code: 401 } });
@@ -811,10 +822,8 @@ export const getOrdersService = async (filter = {}, requester) => {
   limit = Number(limit) || 10;
   page = Number(page) || 1;
 
-  if (limit < 1 || limit > 100)
-    throw new Error('Limit is not valid', { cause: { code: 400 } });
-  if (page < 1)
-    throw new Error('Page is not valid', { cause: { code: 400 } });
+  if (limit < 1 || limit > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
+  if (page < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
 
   const isDesc = desc === 'true' || desc === true;
 
@@ -835,6 +844,20 @@ export const getOrdersService = async (filter = {}, requester) => {
     parents = await findOrders({ customer_id: requester._id }, isDesc);
   }
 
+  if (filter.payment_status && filter.payment_status !== 'ALL')
+    parents = parents.filter(
+      (order) =>
+        (order.payment?.status || order.payment_status || 'pending') === filter.payment_status,
+    );
+  if (filter.search) {
+    const matches = [];
+    for (const parent of parents) {
+      const subs = await findSubOrders({ parent_order_id: parent._id });
+      const customer = await findOneUser({ _id: String(parent.customer_id) });
+      if (panelSearch([parent, subs, customer], filter.search)) matches.push(parent);
+    }
+    parents = matches;
+  }
   const total = parents.length;
   const totalPages = Math.ceil(total / limit);
   const start = (page - 1) * limit;
@@ -872,8 +895,7 @@ export const getOrderService = async (orderId, requester) => {
       cause: { code: 403 },
     });
 
-  if (!isAdmin && !isCustomer)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isCustomer) throw new Error('No Access', { cause: { code: 403 } });
 
   const subs = await findSubOrders({ parent_order_id: orderId });
 
@@ -891,10 +913,8 @@ export const getSubOrdersService = async (parentId, filter = {}, requester) => {
   limit = Number(limit) || 10;
   page = Number(page) || 1;
 
-  if (limit < 1 || limit > 100)
-    throw new Error('Limit is not valid', { cause: { code: 400 } });
-  if (page < 1)
-    throw new Error('Page is not valid', { cause: { code: 400 } });
+  if (limit < 1 || limit > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
+  if (page < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
 
   const parent = await findOneOrder({ _id: parentId });
   if (!parent) throw new Error('Parent order not found', { cause: { code: 404 } });
@@ -907,8 +927,7 @@ export const getSubOrdersService = async (parentId, filter = {}, requester) => {
   if (isSeller && !isAdmin)
     throw new Error('Sellers must use /order/sub/all endpoint', { cause: { code: 403 } });
 
-  if (!isAdmin && !isCustomer)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isCustomer) throw new Error('No Access', { cause: { code: 403 } });
 
   let subs = await findSubOrders({ parent_order_id: parentId });
 
@@ -935,10 +954,8 @@ export const getSubOrdersAllService = async (filter = {}, requester) => {
   limit = Number(limit) || 10;
   page = Number(page) || 1;
 
-  if (limit < 1 || limit > 100)
-    throw new Error('Limit is not valid', { cause: { code: 400 } });
-  if (page < 1)
-    throw new Error('Page is not valid', { cause: { code: 400 } });
+  if (limit < 1 || limit > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
+  if (page < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
 
   const isAdmin = requester.role === 'admin';
   const isSeller = requester.is_seller === true;
@@ -955,8 +972,7 @@ export const getSubOrdersAllService = async (filter = {}, requester) => {
     const myParents = await findOrders({ customer_id: requester._id });
     const myParentIds = myParents.map((p) => p._id);
 
-    if (myParentIds.length === 0)
-      return { data: [], total: 0, totalPages: 0 };
+    if (myParentIds.length === 0) return { data: [], total: 0, totalPages: 0 };
 
     query.parent_order_id = { $in: myParentIds };
   }
@@ -980,10 +996,9 @@ export const getSubOrdersAllService = async (filter = {}, requester) => {
     const normalized = status.trim().toLowerCase();
 
     if (!allowedStatuses.includes(normalized))
-      throw new Error(
-        `Invalid status filter. Allowed: ${allowedStatuses.join(', ')}`,
-        { cause: { code: 400 } },
-      );
+      throw new Error(`Invalid status filter. Allowed: ${allowedStatuses.join(', ')}`, {
+        cause: { code: 400 },
+      });
 
     query.status = normalized;
   }
@@ -997,6 +1012,7 @@ export const getSubOrdersAllService = async (filter = {}, requester) => {
     return isDesc ? db - da : da - db;
   });
 
+  if (filter.search) subs = subs.filter((sub) => panelSearch(sub, filter.search));
   const total = subs.length;
   const totalPages = Math.ceil(total / limit);
   const start = (page - 1) * limit;
@@ -1022,8 +1038,53 @@ export const getSubOrderService = async (subOrderId, requester) => {
   const isSeller = String(sub.seller_id) === String(requester._id);
   const isCustomer = String(parent.customer_id) === String(requester._id);
 
-  if (!isAdmin && !isSeller && !isCustomer)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isSeller && !isCustomer) throw new Error('No Access', { cause: { code: 403 } });
 
   return sub;
+};
+function orderItemSnapshot(
+  product,
+  { sourcePrice, lockedPrice, discountPercentage, discountAmount, quantity },
+) {
+  return {
+    product_id: product._id,
+    name: structuredClone(fieldDocument(product).name),
+    source_price: structuredClone(sourcePrice),
+    fx_snapshot: structuredClone(lockedPrice.quote),
+    brand: structuredClone(fieldDocument(product).brand),
+    images_id: [...(product.images_id || [])],
+    price: { currency: 'IRR', amount: lockedPrice.amount },
+    discount: { percentage: discountPercentage, amount: discountAmount },
+    quantity,
+  };
+}
+
+export const getOrderStatsService = async (requester, currency = 'USD') => {
+  const actor = await statsActor(requester);
+  const data = await orderStats(actor.role === 'admin' ? null : actor._id);
+  const revenue = await statsMoney(data.revenue, currency);
+  const daily = [];
+  for (let index = 6; index >= 0; index--) {
+    const date = new Date();
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCDate(date.getUTCDate() - index);
+    const day = date.toISOString().slice(0, 10);
+    const converted = await statsMoney(
+      data.daily.filter((row) => row.day === day),
+      currency,
+    );
+    daily.push({ day, amount: converted.amount });
+  }
+  return {
+    counts: data.counts,
+    statuses: data.statuses,
+    revenue: revenue.amount,
+    currency,
+    error_code: revenue.error_code,
+    daily,
+    scope: actor.role === 'admin' ? 'all' : 'own',
+    calendar: 'gregory',
+    timezone: 'UTC',
+    basis: actor.role === 'admin' ? 'paid_parent_orders' : 'delivered_sub_orders',
+  };
 };

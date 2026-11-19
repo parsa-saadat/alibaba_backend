@@ -1,4 +1,8 @@
-import { refreshSessionService, sendLoginCodeService, verifyLoginCodeService } from './auth.service.js';
+import {
+  refreshSessionService,
+  sendLoginCodeService,
+  verifyLoginCodeService,
+} from './auth.service.js';
 
 export const sendCodeController = async (req, res) => {
   try {

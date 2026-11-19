@@ -1,4 +1,9 @@
-import { payOrderService, payPlanService, verifyOrderPaymentService, verifyPlanPaymentService } from './payment.service.js';
+import {
+  payOrderService,
+  payPlanService,
+  verifyOrderPaymentService,
+  verifyPlanPaymentService,
+} from './payment.service.js';
 
 export const payOrderController = async (req, res) => {
   try {

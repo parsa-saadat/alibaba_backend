@@ -1,3 +1,4 @@
+import { getUserStatsService } from './user.service.js';
 import {
   deleteUserService,
   getUserService,
@@ -45,7 +46,7 @@ export const getUserController = async (req, res) => {
 
 export const updateUserController = async (req, res) => {
   try {
-    const user = await updateUserService(req.user._id, req.body, req.user);
+    const user = await updateUserService(req.params.userId, req.body, req.user);
     res.status(200).json({
       body: user,
       status: 200,
@@ -78,5 +79,15 @@ export const deleteUserController = async (req, res) => {
       message: e.message,
       success: false,
     });
+  }
+};
+
+export const getUserStatsController = async (req, res) => {
+  try {
+    const stats = await getUserStatsService(req.user, req.query.currency || 'USD');
+    res.json({ body: stats, success: true, status: 200 });
+  } catch (error) {
+    const status = error.cause?.code || 500;
+    res.status(status).json({ body: null, success: false, status, message: error.message });
   }
 };

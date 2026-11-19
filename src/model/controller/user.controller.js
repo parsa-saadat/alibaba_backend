@@ -1,4 +1,6 @@
-import db from '../../config/mongodb.config.js';
+import database from '../../config/mongodb.config.js';
+import contentModel from '../content.model.js';
+const db = contentModel(database);
 
 import { ObjectId } from 'mongodb';
 
@@ -69,7 +71,10 @@ export const findUsersByIds = async (ids = [], projection = null) => {
     .map((id) => new ObjectId(id));
   if (list.length === 0) return [];
   const options = projection ? { projection } : {};
-  return await db.collection('users').find({ _id: { $in: list } }, options).toArray();
+  return await db
+    .collection('users')
+    .find({ _id: { $in: list } }, options)
+    .toArray();
 };
 
 export const findOneUser = async (field) => {
@@ -96,4 +101,35 @@ export const findOneAndDeleteUser = async (field) => {
   }
   const findOneAndDelete = await db.collection('users').findOneAndDelete(field);
   return findOneAndDelete;
+};
+
+export const userStats = async (scope = {}) => {
+  const collection = database.collection('users');
+  const keys = ['all', 'admins', 'sellers', 'trusted'];
+  const filters = [
+    {},
+    { role: { $in: ['admin', 'root'] } },
+    { $or: [{ is_seller: true }, { role: 'seller' }] },
+    { seller_trust: true },
+  ];
+  const values = await Promise.all(
+    filters.map((filter) => collection.countDocuments({ $and: [scope, filter] })),
+  );
+  return { counts: Object.fromEntries(keys.map((key, index) => [key, values[index]])) };
+};
+
+export const sellerStats = async (scope = {}) => {
+  const collection = database.collection('users');
+  const keys = ['all', 'pending', 'approved', 'active', 'trusted'];
+  const filters = [
+    {},
+    { seller_approved_status: { $ne: true } },
+    { seller_approved_status: true },
+    { seller_approved_status: true, seller_active_status: { $in: ['ACTIVE', 'active'] } },
+    { seller_trust: true },
+  ];
+  const values = await Promise.all(
+    filters.map((filter) => collection.countDocuments({ $and: [scope, filter] })),
+  );
+  return { counts: Object.fromEntries(keys.map((key, index) => [key, values[index]])) };
 };

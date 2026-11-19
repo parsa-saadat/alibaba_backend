@@ -1,3 +1,4 @@
+import { getOrderStatsController } from '../../module/order/order.controller.js';
 import express from 'express';
 import { authenticateToken, authorizeRoles } from '../../module/user/user.middleware.js';
 import {
@@ -14,6 +15,7 @@ import {
 import createLimiter from '../../middleware/safety/ratelimiter.middleware.js';
 
 const router = express.Router();
+router.get('/order/stats', authenticateToken, getOrderStatsController);
 
 const rateLimiter = createLimiter({ windowMs: 5 * 60 * 1000, max: 10 });
 
@@ -33,7 +35,12 @@ router.put('/order/sub/:subOrderId/status', authenticateToken, updateSubOrderSta
 
 router.get('/order/sub/all', authenticateToken, getSubOrdersAllController);
 
-router.get('/order/sub/parent/:parentId', authenticateToken, authorizeRoles(['user', 'admin']), getSubOrdersController,);
+router.get(
+  '/order/sub/parent/:parentId',
+  authenticateToken,
+  authorizeRoles(['user', 'admin']),
+  getSubOrdersController,
+);
 
 router.get('/order/sub/:subOrderId', authenticateToken, getSubOrderController);
 

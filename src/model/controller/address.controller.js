@@ -59,7 +59,7 @@ export const findAddress = async (field, desc) => {
     field.user = new ObjectId(field.user);
   }
   if (desc) return await db.collection('address').find(field).sort({ _id: -1 }).toArray();
-   return await db.collection('address').find(field).toArray();
+  return await db.collection('address').find(field).toArray();
 };
 
 export const findOneAddress = async (field) => {

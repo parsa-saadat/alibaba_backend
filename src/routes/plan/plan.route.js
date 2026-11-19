@@ -1,5 +1,10 @@
+import { getPlanStatsController } from '../../module/plan/plan.controller.js';
 import express from 'express';
-import { authenticateToken, authorizeRoles, optionalAuthenticateToken } from '../../module/plan/plan.middleware.js';
+import {
+  authenticateToken,
+  authorizeRoles,
+  optionalAuthenticateToken,
+} from '../../module/plan/plan.middleware.js';
 import {
   createPlanController,
   getPlansController,
@@ -9,6 +14,7 @@ import {
 } from '../../module/plan/plan.controller.js';
 
 const router = express.Router();
+router.get('/stats', authenticateToken, getPlanStatsController);
 
 router.get('/', optionalAuthenticateToken, getPlansController);
 

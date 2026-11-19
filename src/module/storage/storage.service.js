@@ -13,7 +13,7 @@ export const uploadService = async (files, requester) => {
   for (let i = 0; i < files.length; i++) {
     const { originalname, mimetype, size, buffer } = files[i];
 
-    if (requester.user.role == 'user' && !mimetype.startsWith('image/')) 
+    if (requester.user.role == 'user' && !mimetype.startsWith('image/'))
       throw new Error('Only image files are allowed', { cause: { code: 400 } });
 
     if (!mimetype.startsWith('image/') && !mimetype.startsWith('video/'))

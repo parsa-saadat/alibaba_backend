@@ -1,10 +1,20 @@
+import { getCategoryStatsController } from '../../module/category/category.controller.js';
 import express from 'express';
-import { createCategoryController, deleteCategoryController, getCategoriesController, getCategoryController, getCategoryTreeController, updateCategoryController } from '../../module/category/category.controller.js';
-import { authenticateToken, optionalAuthenticateToken } from '../../module/category/category.middleware.js';
-
-
+import {
+  createCategoryController,
+  deleteCategoryController,
+  getCategoriesController,
+  getCategoryController,
+  getCategoryTreeController,
+  updateCategoryController,
+} from '../../module/category/category.controller.js';
+import {
+  authenticateToken,
+  optionalAuthenticateToken,
+} from '../../module/category/category.middleware.js';
 
 const router = express.Router();
+router.get('/category/stats', authenticateToken, getCategoryStatsController);
 
 router.post('/category', authenticateToken, createCategoryController);
 

@@ -1,5 +1,13 @@
-import { deriveContent } from '../i18n/content.service.js';
-import { translationCreate, translationPatch, searchableName } from '../i18n/content.service.js';
+import { panelSearch } from '../../utils/helpers/panel-search.helper.js';
+import { statsActor, statsMoney } from '../../utils/helpers/stats.helper.js';
+import { storeStats } from '../../model/controller/store.controller.js';
+import {
+  deriveContent,
+  translationCreate,
+  translationPatch,
+  searchableName,
+} from '../../utils/helpers/localization.helper.js';
+
 import { ObjectId } from 'mongodb';
 
 import { emailValidator } from '../../utils/validators/email.validator.js';
@@ -86,6 +94,7 @@ export const createStoreService = async (user, data, requester) => {
   }
 
   // ─── validation فروشگاه ───
+  validateStoreAddress(data.contact_info);
   const requiredFields = ['name', 'contact_info'];
   const isValidStore = requiredFields.every((field) => data[field]);
 
@@ -97,8 +106,7 @@ export const createStoreService = async (user, data, requester) => {
   if (data?.banner_image_id && !ObjectId.isValid(data?.banner_image_id))
     throw new Error('banner_image_id is not valid', { cause: { code: 400 } });
 
-  if (!data.contact_info?.email)
-    throw new Error('email is required', { cause: { code: 400 } });
+  if (!data.contact_info?.email) throw new Error('email is required', { cause: { code: 400 } });
 
   if (!data.contact_info?.fax && !data.contact_info?.phone)
     throw new Error('fax or phone number is required', { cause: { code: 400 } });
@@ -127,6 +135,7 @@ export const createStoreService = async (user, data, requester) => {
     banner_image_id: data?.banner_image_id,
     description: data?.description ?? null,
     contact_info: {
+      address: data.contact_info?.address?.trim() || '',
       email: data.contact_info?.email,
       phone: data.contact_info?.phone ?? null,
       fax: data.contact_info?.fax ?? null,
@@ -170,14 +179,12 @@ export const getStoresService = async (filter = {}) => {
 // getStoresPermService (admin/seller)
 // ─────────────────────────────────────────────
 export const getStoresPermService = async (userId, requester, filter = {}) => {
-  if (!requester)
-    throw new Error('Authentication required', { cause: { code: 401 } });
+  if (!requester) throw new Error('Authentication required', { cause: { code: 401 } });
 
   const isAdmin = requester.role === 'admin';
   const isSeller = requester.role === 'seller' || requester.is_seller === true;
 
-  if (!isAdmin && !isSeller)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isSeller) throw new Error('No Access', { cause: { code: 403 } });
 
   const requesterId = requester._id.toString();
 
@@ -207,6 +214,14 @@ export const getStoresPermService = async (userId, requester, filter = {}) => {
   if (email) stores = stores.filter((s) => s.contact_info?.email?.includes(email));
   if (phone) stores = stores.filter((s) => s.contact_info?.phone?.includes(phone));
 
+  if (filter.search) {
+    const matches = [];
+    for (const store of stores) {
+      const owner = await findOneUser({ _id: String(store.user) });
+      if (panelSearch([store, owner], filter.search)) matches.push(store);
+    }
+    stores = matches;
+  }
   const total = stores.length;
   const totalPages = Math.ceil(total / limit);
   const start = (page - 1) * limit;
@@ -225,24 +240,38 @@ export const getStoreService = async (storeId) => {
   const store = await findOneStore({ _id: storeId });
   if (!store) throw new Error('Store not found', { cause: { code: 404 } });
 
-  if (store.status !== 'ENABLE')
-    throw new Error('Store not found', { cause: { code: 404 } });
-
-  return store;
+  if (store.status !== 'ENABLE') throw new Error('Store not found', { cause: { code: 404 } });
+  const owner =
+    store.user && ObjectId.isValid(String(store.user))
+      ? await findOneUser({ _id: String(store.user) })
+      : null;
+  return {
+    ...store,
+    seller_trust: owner?.seller_trust === true,
+    seller: owner
+      ? {
+          _id: owner._id,
+          firstname: owner.firstname,
+          lastname: owner.lastname,
+          seller_trust: owner.seller_trust === true,
+          seller_active_status: owner.seller_active_status,
+          seller_approved_status: owner.seller_approved_status,
+        }
+      : null,
+    seller_profile_resolved: true,
+  };
 };
 
 // ─────────────────────────────────────────────
 // getStorePermService (admin/seller)
 // ─────────────────────────────────────────────
 export const getStorePermService = async (storeId, requester) => {
-  if (!requester)
-    throw new Error('Authentication required', { cause: { code: 401 } });
+  if (!requester) throw new Error('Authentication required', { cause: { code: 401 } });
 
   const isAdmin = requester.role === 'admin';
   const isSeller = requester.role === 'seller' || requester.is_seller === true;
 
-  if (!isAdmin && !isSeller)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isSeller) throw new Error('No Access', { cause: { code: 403 } });
 
   if (!ObjectId.isValid(storeId))
     throw new Error('Store id is not valid', { cause: { code: 400 } });
@@ -264,9 +293,11 @@ export const getStorePermService = async (storeId, requester) => {
 // updateStoreService
 // ─────────────────────────────────────────────
 export const updateStoreService = async (id, data, requester) => {
+  if (['seller_id', 'user', 'user_id'].some((key) => Object.hasOwn(data || {}, key)))
+    throw new Error('Store owner cannot be changed', { cause: { code: 400 } });
+
   data = deriveContent(data, 'store');
-  if (!ObjectId.isValid(id))
-    throw new Error('Store id is not valid', { cause: { code: 400 } });
+  if (!ObjectId.isValid(id)) throw new Error('Store id is not valid', { cause: { code: 400 } });
 
   const userData = await findOneUser({ _id: requester._id });
   if (!userData) throw new Error('User not found', { cause: { code: 404 } });
@@ -317,8 +348,6 @@ export const updateStoreService = async (id, data, requester) => {
         throw new Error('Plan has expired', { cause: { code: 403 } });
       }
     }
-
-
   }
 
   const store = await findOneStore({ _id: id });
@@ -359,19 +388,23 @@ export const updateStoreService = async (id, data, requester) => {
   if (contact_info?.fax && !validateIRLandlineSyntax(contact_info.fax))
     throw new Error('Invalid landline phone (fax number)', { cause: { code: 400 } });
 
+  validateStoreAddress(contact_info);
   const updatedContactInfo = {
+    address:
+      contact_info && Object.hasOwn(contact_info, 'address')
+        ? contact_info.address.trim()
+        : (store.contact_info?.address ?? store.address ?? ''),
     email: contact_info?.email ?? store.contact_info?.email,
     phone: contact_info?.phone ?? store.contact_info?.phone,
     fax: contact_info?.fax ?? store.contact_info?.fax,
   };
 
-  if (!updatedContactInfo.email)
-    throw new Error('email is required', { cause: { code: 400 } });
+  if (!updatedContactInfo.email) throw new Error('email is required', { cause: { code: 400 } });
 
   if (!updatedContactInfo.fax && !updatedContactInfo.phone)
     throw new Error('fax or phone number is required', { cause: { code: 400 } });
 
-  await updateOneStore(
+  const savedStore = await updateOneStore(
     { _id: id },
     {
       ...translationPatch(data.translations, 'store'),
@@ -384,15 +417,14 @@ export const updateStoreService = async (id, data, requester) => {
     },
   );
 
-  return true;
+  return savedStore;
 };
 
 // ─────────────────────────────────────────────
 // deleteStoreService
 // ─────────────────────────────────────────────
 export const deleteStoreService = async (id, requester) => {
-  if (!ObjectId.isValid(id))
-    throw new Error('Store id is not valid', { cause: { code: 400 } });
+  if (!ObjectId.isValid(id)) throw new Error('Store id is not valid', { cause: { code: 400 } });
 
   const userData = await findOneUser({ _id: requester._id });
   if (!userData) throw new Error('User not found', { cause: { code: 404 } });
@@ -400,8 +432,7 @@ export const deleteStoreService = async (id, requester) => {
   const isAdmin = requester.role === 'admin';
   const isSeller = userData.role === 'seller' || userData.is_seller === true;
 
-  if (!isAdmin && !isSeller)
-    throw new Error('No Access', { cause: { code: 403 } });
+  if (!isAdmin && !isSeller) throw new Error('No Access', { cause: { code: 403 } });
 
   if (!isAdmin) {
     if (userData.seller_approved_status !== true)
@@ -420,4 +451,27 @@ export const deleteStoreService = async (id, requester) => {
   await deleteOneStore({ _id: id });
 
   return store;
+};
+function validateStoreAddress(contactInfo) {
+  if (
+    contactInfo &&
+    Object.hasOwn(contactInfo, 'address') &&
+    (typeof contactInfo.address !== 'string' || contactInfo.address.length > 2000)
+  ) {
+    throw new Error('Address must be a string of at most 2000 characters', {
+      cause: { code: 400 },
+    });
+  }
+}
+
+export const getStoreStatsService = async (requester, currency = 'USD') => {
+  const actor = await statsActor(requester);
+  const stats = await storeStats(actor.role === 'admin' ? null : actor._id);
+  for (const row of Object.values(stats.byStore)) {
+    const converted = await statsMoney(row.money, currency);
+    row.value = converted.amount;
+    if (converted.error_code) stats.error_code = converted.error_code;
+    delete row.money;
+  }
+  return { ...stats, currency, scope: actor.role === 'admin' ? 'all' : 'own' };
 };

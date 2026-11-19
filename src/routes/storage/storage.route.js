@@ -14,12 +14,7 @@ import {
 
 const router = express.Router();
 
-router.post(
-  '/',
-  authenticateToken,
-  uploadMiddleware.array('files'),
-  uploadController,
-);
+router.post('/', authenticateToken, uploadMiddleware.array('files'), uploadController);
 
 router.get('/', authenticateToken, authorizeRoles('admin'), getFilesController);
 

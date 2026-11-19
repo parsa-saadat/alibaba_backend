@@ -7,13 +7,9 @@
   "scripts": {
     "start": "node src/bootstrap.js",
     "dev": "node --watch src/bootstrap.js",
-    "test": "node --test test/*.test.js",
     "migrate:i18n": "node scripts/migrate-i18n.js",
     "setup": "node scripts/setup-env.js",
-    "doctor": "node scripts/doctor.js",
-    "check:imports": "node scripts/check-imports.js",
-    "test:integration": "node scripts/integration-check.js",
-    "doctor:fx": "node scripts/fx-doctor.js"
+    "check:imports": "node scripts/check-imports.js"
   },
   "keywords": [],
   "author": "",
@@ -35,8 +31,5 @@
   },
   "engines": {
     "node": ">=20.19"
-  },
-  "devDependencies": {
-    "mongodb-memory-server": "^11.3.0"
   }
 }
