@@ -21,6 +21,6 @@ router.get('/:userId', optionalAuthenticateToken, getUserController);
 
 router.put('/:userId', authenticateToken, updateUserController);
 
-router.delete('/:userId', authenticateToken, deleteUserController);
+router.delete('/:userId', authenticateToken, authorizeRoles(['admin']), deleteUserController);
 
 export default router;

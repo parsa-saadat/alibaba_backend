@@ -1,3 +1,4 @@
+import { ObjectId } from 'mongodb';
 import { panelSearch } from '../../utils/helpers/panel-search.helper.js';
 import { statsActor } from '../../utils/helpers/stats.helper.js';
 import { userStats } from '../../model/controller/user.controller.js';
@@ -106,11 +107,11 @@ export const updateUserService = async (id, data, requester) => {
 };
 
 export const deleteUserService = async (id, requester) => {
-  const user = await findOneUser({ _id: id });
-
-  if (user?._id !== requester?._id && requester?.role !== 'admin')
-    throw new Error('Access Denied', { cause: { code: 400 } });
-
+  // Authorize from persisted identity, never use the actor ID as the deletion target.
+  await statsActor(requester, true);
+  if (!/^[a-fA-F0-9]{24}$/.test(String(id || '')) || !ObjectId.isValid(String(id)))
+    throw new Error('Invalid user ID', { cause: { code: 400 } });
+  const user = await findOneUser({ _id: String(id) });
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
   await deleteAddress({ user: id });
