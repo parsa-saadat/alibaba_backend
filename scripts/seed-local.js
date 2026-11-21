@@ -13,7 +13,7 @@ const client = new MongoClient(URI);
 
 /* ---------- تصویر SVG ساده برای محصولات ---------- */
 const PALETTE = [
-  ['#f5c518', '#0a1736'],
+  ['#ff6a00', '#ffffff'],
   ['#2b6cb0', '#ffffff'],
   ['#38a169', '#ffffff'],
   ['#e0533d', '#ffffff'],
