@@ -37,7 +37,9 @@ export default function i18nMiddleware(req, res, next) {
       let result =
         payload && typeof payload === 'object' ? JSON.parse(JSON.stringify(payload)) : payload;
       if (result && typeof result === 'object' && !Array.isArray(result)) {
-        if ('body' in result) result.body = fieldDocument(result.body);
+        /* preserveBase=true: مقدار پایه‌ی فیلدها وقتی ترجمه‌ها کلید en ندارند گم نشود
+           (مثل باگ تکثیر محصول — نام پایه به‌عنوان en حفظ می‌شود) */
+        if ('body' in result) result.body = fieldDocument(result.body, null, 'en', true);
         if ('body' in result && !req.rawLocale) {
           result.body = localize(result.body, req.locale);
           const target = req.displayCurrency || req.query.currency || displayCurrency(req.locale);
