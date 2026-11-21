@@ -4,7 +4,7 @@ export const contentLanguages = ['en', 'fa', 'ar', 'tr'];
 export const contentFields = {
   products: ['name', 'brand', 'short_description', 'description', 'tags'],
   categories: ['name'],
-  stores: ['name', 'description'],
+  stores: ['name', 'description', 'address'],
   plans: ['name', 'description'],
   users: ['firstname', 'lastname'],
 };

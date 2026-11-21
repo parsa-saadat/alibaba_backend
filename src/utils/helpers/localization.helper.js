@@ -13,7 +13,7 @@ export const defaultLanguage = languages.includes(process.env.DEFAULT_LANG)
 export const schemas = {
   product: { brand: 100, name: 200, short_description: 500, description: 50000, tags: 20 },
   category: { name: 100 },
-  store: { name: 50, description: 255 },
+  store: { name: 50, description: 255, address: 2000 },
   plan: { name: 50, description: 5000 },
 };
 const plain = (v) =>
@@ -88,6 +88,7 @@ export function localize(value, lang) {
     'description',
     'short_description',
     'tags',
+    'address',
     'firstname',
     'lastname',
     'store_name',
@@ -95,7 +96,7 @@ export function localize(value, lang) {
     if (plain(value[field]) && !Object.keys(value[field]).length)
       result[field] = field === 'tags' ? [] : '';
   if (plain(value.translations)) {
-    for (const field of ['name', 'brand', 'short_description', 'description', 'tags']) {
+    for (const field of ['name', 'brand', 'short_description', 'description', 'tags', 'address']) {
       if (Object.hasOwn(value, field))
         result[field] =
           value.translations[lang]?.[field] ?? value.translations.en?.[field] ?? value[field];

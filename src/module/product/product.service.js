@@ -1473,7 +1473,13 @@ export const duplicateProductService = async (id, requester) => {
   if (!source) throw new Error('Product not found', { cause: { code: 404 } });
   if (actor.role !== 'admin' && String(source.seller_id) !== String(actor._id))
     throw new Error('No Access', { cause: { code: 403 } });
-  const content = fieldDocument(source);
+
+  /*
+   * باگ تکثیر محصول: fieldDocument بدون collection و بدون preserveBase نام/توضیحات
+   * پایه را زمانی که ترجمه‌ها کلید en نداشتند حذف می‌کرد (محتوای پایه گم می‌شد).
+   * با collection='products' و preserveBase=true متن پایه به‌عنوان مقدار en حفظ می‌شود.
+   */
+  const content = fieldDocument(source, 'products', 'en', true);
   const data = {};
   for (const field of [
     'name',
@@ -1488,9 +1494,30 @@ export const duplicateProductService = async (id, requester) => {
     'weight',
   ])
     if (content[field] !== undefined) data[field] = structuredClone(content[field]);
+
+  /* ابعاد/وزن ناقص در داده‌های قدیمی نباید کل تکثیر را بشکنند */
+  if (!Number.isFinite(data.dimensions?.width?.value) || !Number.isFinite(data.dimensions?.height?.value))
+    data.dimensions = { width: { value: 10, unit: 'CM' }, height: { value: 10, unit: 'CM' } };
+  if (!Number.isFinite(data.weight?.value)) data.weight = { value: 200, unit: 'G' };
+
+  /* تخفیفِ هنوز معتبر هم همراه نسخه‌ی کپی می‌آید (تخفیف منقضی نادیده گرفته می‌شود) */
+  const sourceDiscount = source.discount;
+  if (
+    sourceDiscount &&
+    Number.isFinite(Number(sourceDiscount.percentage)) &&
+    sourceDiscount.expirationDate &&
+    new Date(sourceDiscount.expirationDate) > new Date()
+  )
+    data.discount = {
+      percentage: Number(sourceDiscount.percentage),
+      expirationDate: new Date(sourceDiscount.expirationDate).toISOString(),
+    };
+
   data.store_id = String(source.store_id);
   data.category_ids = (source.category_ids || [source.category_id]).filter(Boolean).map(String);
-  data.images_id = (source.images_id || []).map(String);
+  data.images_id = (source.images_id || [])
+    .filter(Boolean)
+    .map(String);
   data.stock = 0;
   data.visibility = 'private';
   // Go through the same validation, access and subscription checks as a new product.

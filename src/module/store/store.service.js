@@ -95,6 +95,9 @@ export const createStoreService = async (user, data, requester) => {
 
   // ─── validation فروشگاه ───
   validateStoreAddress(data.contact_info);
+  const storeAddress = buildStoreAddress(data.address ?? data.contact_info?.address);
+  if (storeAddress === undefined)
+    throw new Error('Invalid address value', { cause: { code: 400 } });
   const requiredFields = ['name', 'contact_info'];
   const isValidStore = requiredFields.every((field) => data[field]);
 
@@ -134,8 +137,11 @@ export const createStoreService = async (user, data, requester) => {
     profile_image_id: data?.profile_image_id,
     banner_image_id: data?.banner_image_id,
     description: data?.description ?? null,
+    /* آدرس چندزبانه (field-first) — نقشه‌ی زبانی مثل {en, fa, ar, tr} */
+    address: storeAddress,
     contact_info: {
-      address: data.contact_info?.address?.trim() || '',
+      address:
+        typeof data.contact_info?.address === 'string' ? data.contact_info.address.trim() : '',
       email: data.contact_info?.email,
       phone: data.contact_info?.phone ?? null,
       fax: data.contact_info?.fax ?? null,
@@ -359,7 +365,8 @@ export const updateStoreService = async (id, data, requester) => {
   if (store.status === 'ROOT_DISABLE' && !isAdmin)
     throw new Error('Access Denied', { cause: { code: 400 } });
 
-  let { name, status, profile_image_id, banner_image_id, description, contact_info } = data;
+  let { name, status, profile_image_id, banner_image_id, description, contact_info, address } =
+    data;
 
   if (status && !['ENABLE', 'DISABLE', 'ROOT_DISABLE'].includes(status))
     throw new Error('Invalid status', { cause: { code: 400 } });
@@ -389,10 +396,23 @@ export const updateStoreService = async (id, data, requester) => {
     throw new Error('Invalid landline phone (fax number)', { cause: { code: 400 } });
 
   validateStoreAddress(contact_info);
+
+  /* آدرس چندزبانه: مقدار جدید (نقشه/رشته) یا حفظ مقدار فعلی */
+  const addressUpdate =
+    address === undefined
+      ? undefined
+      : address === null
+        ? null
+        : buildStoreAddress(address ?? contact_info?.address);
+  if (addressUpdate === undefined)
+    throw new Error('Invalid address value', { cause: { code: 400 } });
+
   const updatedContactInfo = {
     address:
       contact_info && Object.hasOwn(contact_info, 'address')
-        ? contact_info.address.trim()
+        ? typeof contact_info.address === 'string'
+          ? contact_info.address.trim()
+          : ''
         : (store.contact_info?.address ?? store.address ?? ''),
     email: contact_info?.email ?? store.contact_info?.email,
     phone: contact_info?.phone ?? store.contact_info?.phone,
@@ -413,6 +433,7 @@ export const updateStoreService = async (id, data, requester) => {
       profile_image_id: profile_image_id ?? store.profile_image_id,
       banner_image_id: banner_image_id ?? store.banner_image_id,
       description: description ?? store.description,
+      ...(addressUpdate !== undefined ? { address: addressUpdate } : {}),
       contact_info: updatedContactInfo,
     },
   );
@@ -452,11 +473,39 @@ export const deleteStoreService = async (id, requester) => {
 
   return store;
 };
+/*
+ * آدرس چندزبانه‌ی فروشگاه:
+ *  - رشته‌ی ساده → { en: text }
+ *  - نقشه‌ی زبانی {en, fa, ar, tr} → همان نقشه (فقط زبان‌های معتبر و متن غیرخالی)
+ *  - null/رشته‌ی خالی → null (بدون آدرس)
+ *  - ورودی نامعتبر → undefined (خطا)
+ */
+function buildStoreAddress(input) {
+  if (input === undefined || input === null || input === '') return null;
+  if (typeof input === 'string') return input.trim() ? { en: input.trim() } : null;
+  if (typeof input === 'object' && !Array.isArray(input)) {
+    const map = {};
+    for (const [code, text] of Object.entries(input))
+      if (['en', 'fa', 'ar', 'tr'].includes(code) && typeof text === 'string' && text.trim())
+        map[code] = text.trim();
+    return Object.keys(map).length ? map : null;
+  }
+  return undefined;
+}
+
 function validateStoreAddress(contactInfo) {
   if (
     contactInfo &&
     Object.hasOwn(contactInfo, 'address') &&
-    (typeof contactInfo.address !== 'string' || contactInfo.address.length > 2000)
+    contactInfo.address !== null &&
+    (typeof contactInfo.address !== 'string' || contactInfo.address.length > 2000) &&
+    !(
+      typeof contactInfo.address === 'object' &&
+      !Array.isArray(contactInfo.address) &&
+      Object.values(contactInfo.address).every(
+        (text) => typeof text === 'string' && text.length <= 2000,
+      )
+    )
   ) {
     throw new Error('Address must be a string of at most 2000 characters', {
       cause: { code: 400 },
