@@ -1,0 +1,17 @@
+import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
+import multer from 'multer';
+import { authenticateToken, optionalAuthenticateToken } from '../../module/category/category.middleware.js';
+import { listReviews, saveReview, deleteReview, manageReviews, uploadReviewImages } from '../../module/review/review.service.js';
+const router=Router();
+const wrap=fn=>async(req,res)=>{try{res.json({success:true,status:200,body:await fn(req)});}catch(e){const code=e.cause?.code||500;res.status(code).json({success:false,status:code,body:null,message:code===500?'Review service unavailable':e.message});}};
+const writes=rateLimit({windowMs:60000,limit:20,standardHeaders:true,legacyHeaders:false});
+const images=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024,files:5}}).array('files',5);
+router.post('/review-images',authenticateToken,writes,(req,res,next)=>images(req,res,e=>e?res.status(400).json({success:false,message:'Choose up to 5 JPEG, PNG or WebP images, each up to 5 MB'}):next()),wrap(r=>uploadReviewImages(r.files,r.user)));
+router.get('/manage/reviews',authenticateToken,wrap(r=>manageReviews(r.query,r.user)));
+router.get('/reviews/:type/:id',optionalAuthenticateToken,wrap(r=>listReviews(r.params.type,r.params.id,r.query,r.user)));
+router.post('/reviews/:type/:id',authenticateToken,writes,wrap(r=>saveReview(r.params.type,r.params.id,r.body,r.user)));
+router.post('/reviews/:type/:id/:reviewId/replies',authenticateToken,writes,wrap(r=>saveReview(r.params.type,r.params.id,r.body,r.user,null,r.params.reviewId)));
+router.put('/reviews/:type/:id/:reviewId',authenticateToken,writes,wrap(r=>saveReview(r.params.type,r.params.id,r.body,r.user,r.params.reviewId)));
+router.delete('/reviews/:type/:id/:reviewId',authenticateToken,writes,wrap(r=>deleteReview(r.params.type,r.params.id,r.user,r.params.reviewId)));
+export default router;

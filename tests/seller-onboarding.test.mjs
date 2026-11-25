@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {tables} from './review-db.mjs';
+import {registerSellerService,updateSellerService,getSellerService} from '../src/module/seller/seller.service.js';
+import {findOneUser} from '../src/model/controller/user.controller.js';
+const uid='507f1f77bcf86cd799439011',other='507f1f77bcf86cd799439012';
+tables.users=[{_id:uid,role:'customer',phone:'+989121111111',username:'survey_user'},{_id:other,role:'customer',phone:'+989122222222'}];
+await assert.rejects(()=>registerSellerService({firstname:'',lastname:'User',phone:'09123334444'},{_id:uid}),e=>e.cause?.code===400);
+await assert.rejects(()=>registerSellerService({firstname:'Parsa',lastname:'Saadat',phone:'bad'},{_id:uid}),e=>e.cause?.code===400);
+await assert.rejects(()=>registerSellerService({_id:other,firstname:'Parsa',lastname:'Saadat',phone:'09123334444'},{_id:uid,role:'admin'}),e=>e.cause?.code===403);
+await registerSellerService({firstname:'Parsa',lastname:'Saadat',phone:'۰۹۱۲۳۳۳۴۴۴۴',seller_approved_status:true,seller_trust:true},{_id:uid});
+let saved=await findOneUser({_id:uid});assert.equal(saved.firstname,'Parsa');assert.equal(saved.lastname,'Saadat');assert.equal(saved.phone,'+989121111111','login phone must not be replaced');assert.equal(saved.seller_contact_phone,'+989123334444');assert.equal(saved.seller_approved_status,false);assert.equal(saved.seller_trust,false);assert.equal(saved.seller_active_status,'INACTIVE');assert.equal(saved.is_seller,true);assert.equal(saved.settlement_account,undefined);assert.equal(saved.national_ID,undefined);
+await assert.rejects(()=>registerSellerService({firstname:'Parsa',lastname:'Saadat',phone:'09123334444'},{_id:uid}),e=>e.cause?.code===400);
+const settlement={type:'card',card_number:'6037991234567890',sheba_number:'IR'+ '1'.repeat(24),firstname_lastname:'Parsa Saadat'};
+await updateSellerService(uid,{settlement_account:settlement},{_id:uid,role:'seller'});saved=await getSellerService(uid,{_id:uid,role:'seller'});assert.deepEqual(saved.settlement_account,settlement);assert.equal(saved.seller_approved_status,false);
+await assert.rejects(()=>updateSellerService(uid,{settlement_account:settlement},{_id:other,role:'customer'}));
+console.log('PASS actual seller services: exactly first/last/contact onboarding without bank/identity; canonical Persian-digit phone; login phone preserved; pending/untrusted/inactive unchanged; missing/invalid/duplicate/stale-admin targeting denied; owner settlement saved later without national ID/address; foreign owner denied');

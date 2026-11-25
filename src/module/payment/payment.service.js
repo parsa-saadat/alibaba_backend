@@ -81,18 +81,36 @@ export const payOrderService = async (orderId, requester) => {
     );
   }
 
+  if (parent.payment?.authority && parent.payment.status === 'pending') {
+    const previousIds = (parent.payment.sub_orders_snapshot || []).map(String).sort().join(',');
+    const currentIds = payableSubs
+      .map((sub) => String(sub._id))
+      .sort()
+      .join(',');
+    if (parent.payment.amount !== payableAmount || previousIds !== currentIds)
+      throw new Error(
+        'Existing payment snapshot changed; reconcile the previous payment before retrying',
+        { cause: { code: 409 } },
+      );
+    return { url: `${ZARINPAL_PAY_URL}/${parent.payment.authority}` };
+  }
+
   const callbackURL = `${VERIFY_PAYMENT_CALLBACK_URL}?orderId=${parent._id}`;
 
   let response;
   try {
-    response = await axios.post(ZARINPAL_PAYMENT_REQUEST_URL, {
-      merchant_id: ZARINPAL_MERCHANT_ID,
-      amount: payableAmount,
-      callback_url: callbackURL,
-      currency: parent.currency || 'IRR',
-      order_id: parent._id.toString(),
-      description: `Payment for order ${parent.order_number}`,
-    });
+    response = await axios.post(
+      ZARINPAL_PAYMENT_REQUEST_URL,
+      {
+        merchant_id: ZARINPAL_MERCHANT_ID,
+        amount: payableAmount,
+        callback_url: callbackURL,
+        currency: 'IRR',
+        order_id: parent._id.toString(),
+        description: `Payment for order ${parent.order_number}`,
+      },
+      { timeout: 15000 },
+    );
   } catch (err) {
     console.log(err.message, console.log(payableAmount));
     throw new Error('Payment gateway is not available', { cause: { code: 502 } });
@@ -100,7 +118,8 @@ export const payOrderService = async (orderId, requester) => {
 
   const authority = response?.data?.data?.authority;
 
-  if (!authority) throw new Error('Failed to generate payment link', { cause: { code: 500 } });
+  if (response?.data?.data?.code !== 100 || !authority)
+    throw new Error('Failed to generate payment link', { cause: { code: 500 } });
 
   // ⭐ ذخیره‌ی snapshot + amount برای verify
   await updateOneOrder(
@@ -143,15 +162,15 @@ export const verifyOrderPaymentService = async (data) => {
   const parent = await findOneOrder({ _id: orderId });
   if (!parent) throw new Error('Order not found', { cause: { code: 404 } });
 
+  if (!parent.payment?.authority || parent.payment.authority !== Authority)
+    throw new Error('Bad request — authority mismatch', { cause: { code: 400 } });
+
   if (parent.payment?.status === 'paid')
     return {
       ref_id: parent.payment.ref_id || null,
       paid_amount: parent.paid_amount,
       already_paid: true,
     };
-
-  if (!parent.payment?.authority || parent.payment.authority !== Authority)
-    throw new Error('Bad request — authority mismatch', { cause: { code: 400 } });
 
   const snapshot = parent.payment?.sub_orders_snapshot || [];
   if (snapshot.length === 0)
@@ -160,6 +179,8 @@ export const verifyOrderPaymentService = async (data) => {
     });
 
   const originalAmount = parent.payment.amount;
+  if (!Number.isSafeInteger(originalAmount) || originalAmount < 1000 || parent.currency !== 'IRR')
+    throw new Error('Invalid IRR payment snapshot', { cause: { code: 400 } });
 
   const snapshotSubs = [];
   for (const sid of snapshot) {
@@ -245,7 +266,7 @@ export const verifyOrderPaymentService = async (data) => {
     (s) =>
       EXCLUDED_FOR_PAYMENT.includes(s.status) &&
       paidSet.has(String(s._id)) &&
-      s.refund?.status === 'pending',
+      ['pending', 'processing', 'submitted', 'unknown', 'failed'].includes(s.refund?.status),
   );
 
   const completedRefunds = allSubs.filter((s) => s.refund?.status === 'completed');
@@ -355,19 +376,24 @@ export const payPlanService = async (planId, requester) => {
 
   let response;
   try {
-    response = await axios.post(ZARINPAL_PAYMENT_REQUEST_URL, {
-      merchant_id: ZARINPAL_MERCHANT_ID,
-      amount: zarinpalAmount,
-      callback_url: callbackURL,
-      currency: 'IRR',
-      description: `Payment for plan ${plan.name}`,
-    });
+    response = await axios.post(
+      ZARINPAL_PAYMENT_REQUEST_URL,
+      {
+        merchant_id: ZARINPAL_MERCHANT_ID,
+        amount: zarinpalAmount,
+        callback_url: callbackURL,
+        currency: 'IRR',
+        description: `Payment for plan ${plan.name}`,
+      },
+      { timeout: 15000 },
+    );
   } catch (err) {
     throw new Error('Payment gateway is not available', { cause: { code: 502 } });
   }
 
   const authority = response?.data?.data?.authority;
-  if (!authority) throw new Error('Failed to generate payment link', { cause: { code: 500 } });
+  if (response?.data?.data?.code !== 100 || !authority)
+    throw new Error('Failed to generate payment link', { cause: { code: 500 } });
 
   // ⭐ ذخیره به‌صورت آبجکت واحد (overwrite)
   await updateOneUser(

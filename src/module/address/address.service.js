@@ -8,7 +8,7 @@ import {
   updateAddress,
   updateOneAddress,
 } from '../../model/controller/address.controller.js';
-import { findOneUser, updateOneUser } from '../../model/controller/user.controller.js';
+import { findOneUser } from '../../model/controller/user.controller.js';
 
 import { validateNumber } from '../../utils/validators/number.validator.js';
 import { validateIRPostalCode } from '../../utils/validators/postalcode.validator.js';
@@ -48,19 +48,17 @@ export const createAddressService = async (userId, data, requester) => {
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
 
   if (data.address.is_default) {
-    const address = await findAddress({ user: user._id, is_default: true });
+    const address = await findAddress({ user: user._id, 'address.is_default': true });
     if (address) await updateAddress({ user: user._id }, { 'address.is_default': false });
   }
 
-  const newAddress = await insertAddress({ user: user._id, ...data });
-  let address = null;
-  console.log(user.address);
-  if (user.address) address = [...user.address, newAddress._id];
-  else address = [newAddress._id];
-
-  await updateOneUser({ _id: user._id }, { address: address });
-
-  return newAddress;
+  // Delivery addresses live in their own collection. user.address is also used
+  // for the seller office address object, not an array of delivery-address IDs.
+  const allowed = [...requiredFields, 'is_default'];
+  const address = Object.fromEntries(
+    allowed.filter((k) => data.address[k] !== undefined).map((k) => [k, data.address[k]]),
+  );
+  return await insertAddress({ user: user._id, address });
 };
 
 export const getAddressService = async (userId, requester, filter) => {
@@ -171,7 +169,7 @@ export const updateAddressService = async (id, userId, data, requester) => {
 
   if (!checkUser) throw new Error('User not found', { cause: { code: 400 } });
 
-  const checkAddress = await findOneAddress({ _id: id });
+  const checkAddress = await findOneAddress({ _id: id, user: userId });
 
   if (!checkAddress) throw new Error('Address not found', { cause: { code: 400 } });
 
@@ -195,20 +193,17 @@ export const updateAddressService = async (id, userId, data, requester) => {
 };
 
 export const deleteAddressService = async (id, userId, requester) => {
+  if (String(userId) !== String(requester._id) && requester.role !== 'admin')
+    throw new Error('No Access', { cause: { code: 403 } });
   const checkUser = await findOneUser({ _id: userId });
 
   if (!checkUser) throw new Error('User not found', { cause: { code: 400 } });
 
-  const checkAddress = await findOneAddress({ _id: id });
+  const checkAddress = await findOneAddress({ _id: id, user: userId });
 
   if (!checkAddress) throw new Error('Address not found', { cause: { code: 400 } });
 
   await deleteAddress({ _id: id, user: userId });
-
-  await updateOneUser(
-    { _id: userId },
-    { address: checkUser.address.filter((item) => item.toString() !== id) },
-  );
 
   return true;
 };

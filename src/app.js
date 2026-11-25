@@ -13,6 +13,7 @@ import routes from './routes/index.js';
 import morganMiddleware from './middleware/log/morgan.middleware.js';
 import corsOptions from './config/cros.config.js';
 import createLimiter from './middleware/safety/ratelimiter.middleware.js';
+import { attachChatGateway } from './module/chat/chat.gateway.js';
 
 config();
 
@@ -79,6 +80,9 @@ app.use((err, req, res, next) => {
 const port = process.env.PORT || 3000;
 const host = process.env.HOST || 'localhost';
 
-app.listen(port, host, () => {
+/* همان سرور HTTP چت زمان‌واقعی را روی مسیر /ws نگه می‌دارد (پورت جدا نه) */
+const server = app.listen(port, host, () => {
   console.log(`Server is running on ${host} port ${port}`);
 });
+
+attachChatGateway(server);

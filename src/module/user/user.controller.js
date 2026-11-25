@@ -8,7 +8,7 @@ import {
 
 export const getUsersController = async (req, res) => {
   try {
-    const users = await getUsersService(req.query);
+    const users = await getUsersService(req.query, req.user);
     res.status(200).json({
       body: users,
       status: 200,

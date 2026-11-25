@@ -34,7 +34,7 @@ export default function contentModel(database) {
       const collection = database.collection(name);
       const filter = (query) => queryFor(query, contentFields[name] || []);
       const update = async (method, query, data, options) => {
-        const previous = name === 'users' ? await collection.findOne(filter(query)) : null;
+        const previous = contentFields[name]?.length ? await collection.findOne(filter(query)) : null;
         return collection[method](filter(query), contentUpdate(data, name, previous), options);
       };
       return {

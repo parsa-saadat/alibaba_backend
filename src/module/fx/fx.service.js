@@ -32,6 +32,8 @@ export function convert(amount, from, to, quote) {
   )
     throw error();
   if (from === to) return amount;
+  if (['IRT', 'IRR'].includes(from) && ['IRT', 'IRR'].includes(to))
+    quote = { rates: { IRR: 1, IRT: 10 } };
   if (!quote?.rates[from] || !quote?.rates[to]) throw error();
   const result = (amount * quote.rates[from]) / quote.rates[to];
   const scale = ['IRR', 'IRT'].includes(to) ? 1 : 100;
@@ -107,6 +109,18 @@ export function createRateService({ fetcher = fetch, now = Date.now, env = proce
 }
 export const getRates = createRateService();
 export async function rialSnapshot(price) {
+  if (!price || !Number.isFinite(price.amount) || price.amount <= 0)
+    throw new Error('Invalid payment price', { cause: { code: 400 } });
+  price = {
+    ...price,
+    currency: String(price.currency || '')
+      .trim()
+      .toUpperCase(),
+  };
+  if (!supportedCurrencies.includes(price.currency))
+    throw new Error('Unsupported payment currency', { cause: { code: 400 } });
+  if (!Number.isSafeInteger(Math.round(price.amount * (price.currency === 'IRT' ? 10 : 1))))
+    throw new Error('Payment amount exceeds supported range', { cause: { code: 400 } });
   if (price.currency === 'IRR') return { amount: Math.round(price.amount), quote: null };
   if (price.currency === 'IRT') return { amount: Math.round(price.amount * 10), quote: null };
   const quote = await getRates();
@@ -137,7 +151,8 @@ export async function displayPrices(body, target, rateProvider = getRates) {
       supportedCurrencies.includes(value.price.currency)
     ) {
       const from = value.price.currency;
-      if (from !== target) quote ||= await rateProvider();
+      if (from !== target && !(['IRR', 'IRT'].includes(from) && ['IRR', 'IRT'].includes(target)))
+        quote ||= await rateProvider();
       result.base_price = value.price;
       result.price = { amount: convert(value.price.amount, from, target, quote), currency: target };
       result.price_quote = quote
@@ -148,7 +163,11 @@ export async function displayPrices(body, target, rateProvider = getRates) {
       const from = value.matched_products[0].price?.currency || 'USD';
       for (const field of ['min_price', 'max_price'])
         if (typeof value[field] === 'number') {
-          if (from !== target) quote ||= await rateProvider();
+          if (
+            from !== target &&
+            !(['IRR', 'IRT'].includes(from) && ['IRR', 'IRT'].includes(target))
+          )
+            quote ||= await rateProvider();
           result[field] = convert(value[field], from, target, quote);
         }
       result.display_currency = target;

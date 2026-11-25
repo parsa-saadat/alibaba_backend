@@ -30,9 +30,8 @@ const MAX_NOTE_LENGTH = 500;
 const MAX_REASON_LENGTH = 500;
 const MAX_ITEM_QUANTITY = 10000;
 
-const ALLOWED_CURRENCIES = process.env.ALLOWED_CURRENCIES
-  ? process.env.ALLOWED_CURRENCIES.split(',').map((c) => c.trim().toUpperCase())
-  : ['IRR'];
+// Checkout snapshots and Zarinpal settlement are always integer IRR, independent of display/catalog currency.
+const ALLOWED_CURRENCIES = ['IRR'];
 
 const FINALIZED_STATUS = 'finalized';
 const CANCEL_PENALTY_PERCENTAGE = Number(process.env.CANCEL_PENALTY_PERCENTAGE) || 10;
@@ -557,8 +556,8 @@ export const cancelSubOrderService = async (subOrderId, data, requester) => {
 
   const now = new Date();
 
-  await updateOneSubOrder(
-    { _id: subOrderId },
+  const cancellationUpdate = await updateOneSubOrder(
+    { _id: subOrderId, status: sub.status },
     {
       status: finalStatus,
       status_history: [
@@ -581,6 +580,9 @@ export const cancelSubOrderService = async (subOrderId, data, requester) => {
       refund: refundData,
     },
   );
+
+  if (cancellationUpdate.matchedCount !== 1)
+    throw new Error('Cancellation state changed; reload the order', { cause: { code: 409 } });
 
   // ─── بازگرداندن موجودی ───
   for (const item of sub.items || []) {
@@ -611,7 +613,7 @@ export const cancelSubOrderService = async (subOrderId, data, requester) => {
     (s) =>
       excludedStatuses.includes(s.status) &&
       paidIds.has(String(s._id)) &&
-      s.refund?.status === 'pending',
+      ['pending', 'processing', 'submitted', 'unknown', 'failed'].includes(s.refund?.status),
   );
   const completedRefunds = allSubs.filter((s) => s.refund?.status === 'completed');
 
@@ -785,7 +787,7 @@ export const updateSubOrderStatusService = async (subOrderId, data, requester) =
       (s) =>
         excludedStatuses.includes(s.status) &&
         paidIds.has(String(s._id)) &&
-        s.refund?.status === 'pending',
+        ['pending', 'processing', 'submitted', 'unknown', 'failed'].includes(s.refund?.status),
     );
     const completedRefunds = allSubs.filter((s) => s.refund?.status === 'completed');
 

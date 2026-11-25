@@ -5,6 +5,31 @@ const db = contentModel(database);
 
 import { ObjectId } from 'mongodb';
 
+// Ratings are derived from reviews on read, never accepted from a catalog editor.
+async function withReviewRatings(products) {
+  if (!products.length) return products;
+  const groups = await database
+    .collection('reviews')
+    .aggregate([
+      {
+        $match: {
+          target_type: 'product',
+          parent_id: null,
+          rating: { $gte: 1, $lte: 5 },
+          target_id: { $in: products.map((p) => p._id) },
+        },
+      },
+      { $group: { _id: '$target_id', average: { $avg: '$rating' }, count: { $sum: 1 } } },
+    ])
+    .toArray();
+  const ratings = new Map(groups.map((g) => [String(g._id), g]));
+  return products.map((p) => ({
+    ...p,
+    rating: Math.round((ratings.get(String(p._id))?.average || 0) * 10) / 10,
+    review_count: ratings.get(String(p._id))?.count || 0,
+  }));
+}
+
 // insert
 
 export const insertProduct = async (data) => {
@@ -64,7 +89,7 @@ export const findProducts = async (field, desc = false, projection = null) => {
   const options = projection ? { projection } : {};
   let cursor = db.collection('products').find(field, options);
   if (desc) cursor = cursor.sort({ _id: -1 });
-  return await cursor.toArray();
+  return await withReviewRatings(await cursor.toArray());
 };
 
 export const findOneProduct = async (field) => {
@@ -72,7 +97,7 @@ export const findOneProduct = async (field) => {
     field._id = new ObjectId(field._id);
   }
   const find = await db.collection('products').findOne(field);
-  return find;
+  return find ? (await withReviewRatings([find]))[0] : null;
 };
 
 // delete

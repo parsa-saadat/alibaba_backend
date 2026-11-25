@@ -1,4 +1,7 @@
+import reviewRouter from './review/review.route.js';
 import { Router } from 'express';
+
+import chatRouter from './chat/chat.route.js';
 
 import productsRouter from './product/product.route.js';
 import storageRouter from './storage/storage.route.js';
@@ -14,6 +17,7 @@ import paymentRouter from './payment/payment.route.js';
 import categoryRouter from './category/category.route.js';
 
 const router = Router();
+router.use('/', reviewRouter);
 
 router.use('/', productsRouter);
 
@@ -38,5 +42,7 @@ router.use('/', orderRouter);
 router.use('/', paymentRouter);
 
 router.use('/', categoryRouter);
+
+router.use('/chat', chatRouter);
 
 export default router;

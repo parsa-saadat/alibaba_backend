@@ -1,3 +1,4 @@
+import { validateAttributes } from './attributes.core.js';
 import { panelSearch } from '../../utils/helpers/panel-search.helper.js';
 import { statsActor } from '../../utils/helpers/stats.helper.js';
 import { productStats } from '../../model/controller/product.controller.js';
@@ -48,6 +49,7 @@ const LIST_PROJECTION = {
   store_id: 1,
   seller_id: 1,
   rating: 1,
+  key_attributes: 1,
   category_id: 1, // primary (backward compat)
   category_ids: 1, // ⭐ همه‌ی دسته‌ها
   production: 1,
@@ -380,6 +382,7 @@ export const createProductService = async (data, requester, { duplicate = false 
     category_ids: validCategoryIds, // ⭐ همه‌ی دسته‌ها
     short_description: data.short_description.trim(),
     description: data.description,
+    key_attributes: validateAttributes(data.key_attributes),
     production: data.production,
     images_id: data.images_id,
     price: {
@@ -427,6 +430,7 @@ export const getProductsService = async (filter = {}) => {
     limit = 10,
     desc,
     seller_id,
+    store_id,
     brand,
     name,
     min_production,
@@ -448,6 +452,8 @@ export const getProductsService = async (filter = {}) => {
   if (limit < 1 || limit > 100) throw new Error('Limit is not valid', { cause: { code: 400 } });
   if (page < 1) throw new Error('Page is not valid', { cause: { code: 400 } });
 
+  if (store_id && !ObjectId.isValid(String(store_id)))
+    throw new Error('Store id is not valid', { cause: { code: 400 } });
   if (seller_id && !ObjectId.isValid(seller_id))
     throw new Error('Seller id is not valid', { cause: { code: 400 } });
 
@@ -472,7 +478,11 @@ export const getProductsService = async (filter = {}) => {
   const isDesc = desc === 'true' || desc === true;
 
   let products = await findProducts(
-    { status: 'ACTIVE', visibility: 'PUBLIC' },
+    {
+      status: 'ACTIVE',
+      visibility: 'PUBLIC',
+      ...(store_id ? { store_id: { $in: [new ObjectId(String(store_id)), String(store_id)] } } : {}),
+    },
     isDesc,
     LIST_PROJECTION,
   );
@@ -516,6 +526,36 @@ export const getProductsService = async (filter = {}) => {
   if (min_price) products = products.filter((p) => p.price?.amount >= Number(min_price));
   if (max_price) products = products.filter((p) => p.price?.amount <= Number(max_price));
 
+  if (store_id) {
+    const q = String(filter.store_search || '')
+      .trim()
+      .toLowerCase();
+    const activeDiscount = (p) =>
+      Number(p.discount?.percentage) > 0 &&
+      Number(p.discount?.percentage) <= 100 &&
+      (!p.discount?.expirationDate || new Date(p.discount.expirationDate).getTime() > Date.now());
+    if (q)
+      products = products.filter(
+        (p) => searchableName(p).includes(q) || searchableBrand(p).includes(q),
+      );
+    if (filter.store_discount === 'true') products = products.filter(activeDiscount);
+    if (filter.store_in_stock === 'true')
+      products = products.filter((p) => p.stock_status !== 'OUT_OF_STOCK' && Number(p.stock) > 0);
+    const effectivePrice = (p) =>
+      Number(p.price?.amount || 0) *
+      (1 - (activeDiscount(p) ? Number(p.discount.percentage) : 0) / 100);
+    const order = String(filter.store_sort || 'newest');
+    const compare = {
+      cheap: (a, b) => effectivePrice(a) - effectivePrice(b),
+      expensive: (a, b) => effectivePrice(b) - effectivePrice(a),
+      discount: (a, b) =>
+        (activeDiscount(b) ? b.discount.percentage : 0) -
+        (activeDiscount(a) ? a.discount.percentage : 0),
+      newest: (a, b) => String(b._id).localeCompare(String(a._id)),
+    }[order];
+    if (compare)
+      products.sort((a, b) => compare(a, b) || String(b._id).localeCompare(String(a._id)));
+  }
   const total = products.length;
   const totalPages = Math.ceil(total / limit);
   const start = (page - 1) * limit;
@@ -851,6 +891,7 @@ export const searchStoresByProductService = async (filter = {}) => {
     stock: 1,
     stock_status: 1,
     rating: 1,
+    key_attributes: 1,
     tags: 1,
     category_id: 1,
     category_ids: 1,
@@ -1383,6 +1424,10 @@ export const updateProductService = async (id, data, requester) => {
         ? data.short_description.trim()
         : product.short_description,
     description: data.description !== undefined ? data.description : product.description,
+    key_attributes:
+      data.key_attributes !== undefined
+        ? validateAttributes(data.key_attributes)
+        : product.key_attributes || [],
     production: data.production !== undefined ? data.production : product.production,
     images_id: data.images_id !== undefined ? data.images_id : product.images_id,
     price: {
@@ -1411,21 +1456,21 @@ export const updateProductService = async (id, data, requester) => {
         value:
           data.dimensions?.width?.value !== undefined
             ? data.dimensions.width.value
-            : product.dimensions.width.value,
+            : (product.dimensions?.width?.value ?? null),
         unit:
           data.dimensions?.width?.unit !== undefined
             ? data.dimensions.width.unit.toUpperCase()
-            : product.dimensions.width.unit,
+            : (product.dimensions?.width?.unit ?? null),
       },
       height: {
         value:
           data.dimensions?.height?.value !== undefined
             ? data.dimensions.height.value
-            : product.dimensions.height.value,
+            : (product.dimensions?.height?.value ?? null),
         unit:
           data.dimensions?.height?.unit !== undefined
             ? data.dimensions.height.unit.toUpperCase()
-            : product.dimensions.height.unit,
+            : (product.dimensions?.height?.unit ?? null),
       },
     },
     weight: {
@@ -1492,11 +1537,15 @@ export const duplicateProductService = async (id, requester) => {
     'warranty',
     'dimensions',
     'weight',
+    'key_attributes',
   ])
     if (content[field] !== undefined) data[field] = structuredClone(content[field]);
 
   /* ابعاد/وزن ناقص در داده‌های قدیمی نباید کل تکثیر را بشکنند */
-  if (!Number.isFinite(data.dimensions?.width?.value) || !Number.isFinite(data.dimensions?.height?.value))
+  if (
+    !Number.isFinite(data.dimensions?.width?.value) ||
+    !Number.isFinite(data.dimensions?.height?.value)
+  )
     data.dimensions = { width: { value: 10, unit: 'CM' }, height: { value: 10, unit: 'CM' } };
   if (!Number.isFinite(data.weight?.value)) data.weight = { value: 200, unit: 'G' };
 
@@ -1515,9 +1564,7 @@ export const duplicateProductService = async (id, requester) => {
 
   data.store_id = String(source.store_id);
   data.category_ids = (source.category_ids || [source.category_id]).filter(Boolean).map(String);
-  data.images_id = (source.images_id || [])
-    .filter(Boolean)
-    .map(String);
+  data.images_id = (source.images_id || []).filter(Boolean).map(String);
   data.stock = 0;
   data.visibility = 'private';
   // Go through the same validation, access and subscription checks as a new product.

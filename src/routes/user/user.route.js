@@ -15,7 +15,7 @@ import {
 const router = express.Router();
 router.get('/stats', authenticateToken, getUserStatsController);
 
-router.get('/', authenticateToken, authorizeRoles('admin'), getUsersController);
+router.get('/', authenticateToken, authorizeRoles(['admin']), getUsersController);
 
 router.get('/:userId', optionalAuthenticateToken, getUserController);
 

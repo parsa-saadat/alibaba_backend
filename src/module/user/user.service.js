@@ -14,7 +14,12 @@ import {
 
 import { emailValidator } from '../../utils/validators/email.validator.js';
 
-export const getUsersService = async (filter = {}) => {
+export const getUsersService = async (filter = {}, actor) => {
+  const actual =
+    actor?._id && ObjectId.isValid(String(actor._id))
+      ? await findOneUser({ _id: new ObjectId(String(actor._id)) })
+      : null;
+  if (actual?.role !== 'admin') throw new Error('Access denied', { cause: { code: 403 } });
   let { page = 1, limit = 10, desc, phone, username, role } = filter;
 
   limit = Number(limit) || 10;

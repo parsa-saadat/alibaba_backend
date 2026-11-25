@@ -185,6 +185,18 @@ export function contentUpdate(update, collection, previous) {
       }
     } else set[field] = fieldDocument(value);
   }
+  // MongoDB cannot set name.en below an existing string. Convert only legacy
+  // scalar fields; already migrated maps keep their atomic dotted updates.
+  for (const field of contentFields[collection] || []) {
+    if (previous?.[field] == null || languageMap(previous[field]) || object(previous[field])) continue;
+    const dotted = Object.keys(set).filter(key => key.startsWith(field + '.'));
+    const deletions = Object.keys(unset).filter(key => key.startsWith(field + '.'));
+    if (!dotted.length && !deletions.length) continue;
+    const map = { en: previous[field] };
+    for (const key of dotted) { map[key.slice(field.length + 1)] = set[key]; delete set[key]; }
+    for (const key of deletions) { delete map[key.slice(field.length + 1)]; delete unset[key]; }
+    set[field] = map;
+  }
   // Delete only known obsolete translation metadata, never arbitrary application fields.
   unset.translations = '';
   unset.translation_status = '';

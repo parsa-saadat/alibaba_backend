@@ -9,7 +9,13 @@
     "dev": "node --watch src/bootstrap.js",
     "migrate:i18n": "node scripts/migrate-i18n.js",
     "setup": "node scripts/setup-env.js",
-    "check:imports": "node scripts/check-imports.js"
+    "check:imports": "node scripts/check-imports.js",
+    "test:refund": "node tests/refund.test.mjs",
+    "test:reviews": "node --experimental-loader ./tests/review-loader.mjs tests/review.test.mjs",
+    "test:attributes": "node --experimental-loader ./tests/review-loader.mjs tests/attributes-save.test.mjs",
+    "test:review-authors": "node --experimental-loader ./tests/review-loader.mjs tests/review-author.test.mjs",
+    "test:seller-onboarding": "node --experimental-loader ./tests/review-loader.mjs tests/seller-onboarding.test.mjs",
+    "test:chat": "node --experimental-loader ./tests/review-loader.mjs tests/chat.test.mjs"
   },
   "keywords": [],
   "author": "",
@@ -27,7 +33,8 @@
     "mongodb": "^7.7.0",
     "morgan": "^1.12.1",
     "multer": "^2.4.0",
-    "uuid": "^14.0.3"
+    "uuid": "^14.0.3",
+    "ws": "^8.23.0"
   },
   "engines": {
     "node": ">=20.19"

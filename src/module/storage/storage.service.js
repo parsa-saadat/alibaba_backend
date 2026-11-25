@@ -68,7 +68,8 @@ export const getFileService = async (id) => {
 
   if (!file) throw new Error('File not found', { cause: { code: 404 } });
 
-  return file;
+  const { review_owner, ...publicFile } = file;
+  return publicFile;
 };
 
 export const deleteFileService = async (id) => {

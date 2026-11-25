@@ -1,3 +1,4 @@
+import { requestRefundService, reconcileRefundService } from './refund.service.js';
 import {
   payOrderService,
   payPlanService,
@@ -118,5 +119,37 @@ export const verifyPlanPaymentController = async (req, res) => {
       message: e.message,
       success: false,
     });
+  }
+};
+
+// Only protected admin routes call these handlers; no gateway credentials reach the browser.
+export const requestRefundController = async (req, res) => {
+  try {
+    const body = await requestRefundService(req.params.subOrderId, req.body, req.user);
+    res.json({ success: true, status: 200, body });
+  } catch (e) {
+    res
+      .status(e.cause?.code || 500)
+      .json({
+        success: false,
+        status: e.cause?.code || 500,
+        body: null,
+        message: e.cause ? e.message : 'Refund service unavailable',
+      });
+  }
+};
+export const reconcileRefundController = async (req, res) => {
+  try {
+    const body = await reconcileRefundService(req.params.subOrderId, req.user);
+    res.json({ success: true, status: 200, body });
+  } catch (e) {
+    res
+      .status(e.cause?.code || 500)
+      .json({
+        success: false,
+        status: e.cause?.code || 500,
+        body: null,
+        message: e.cause ? e.message : 'Refund service unavailable',
+      });
   }
 };

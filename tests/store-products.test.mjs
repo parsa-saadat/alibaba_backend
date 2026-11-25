@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {tables} from './review-db.mjs';
+import {getProductsService} from '../src/module/product/product.service.js';
+const sid='507f1f77bcf86cd799439013',other='507f1f77bcf86cd799439014';
+const oid=i=>Number(i).toString(16).padStart(24,'0');
+tables.stores=[{_id:sid,name:{en:'Store',fa:'فروشگاه'}},{_id:other,name:'Other'}];tables.reviews=[];
+tables.products=Array.from({length:31},(_,i)=>({_id:oid(i+1),store_id:i<21?sid:other,name:{en:`Instrument ${i}`,fa:`ابزار ${i}`},brand:'Comnav',status:i===20?'INACTIVE':'ACTIVE',visibility:'PUBLIC',price:{amount:100+i,currency:'USD'},stock:i%2?4:0,stock_status:i%2?'IN_STOCK':'OUT_OF_STOCK',discount:i<6?{percentage:20,expirationDate:i<3?'2099-01-01':'2000-01-01'}:null}));
+const query={store_id:sid,limit:8};const pages=await Promise.all([1,2,3].map(page=>getProductsService({...query,page})));
+assert.deepEqual(pages.map(p=>p.data.length),[8,8,4]);assert.ok(pages.every(p=>p.total===20&&p.totalPages===3));const ids=pages.flatMap(p=>p.data.map(r=>String(r._id)));assert.equal(new Set(ids).size,20);assert.ok(pages.flatMap(p=>p.data).every(r=>String(r.store_id)===sid));
+assert.equal((await getProductsService({...query,store_search:'Instrument 19'})).total,1);
+assert.equal((await getProductsService({...query,store_search:'ابزار 19'})).total,1);
+assert.equal((await getProductsService({...query,store_discount:'true'})).total,3);
+assert.equal((await getProductsService({...query,store_in_stock:'true'})).total,10);
+const cheap=await getProductsService({...query,store_sort:'cheap'});assert.equal(String(cheap.data[0]._id),oid(1));
+assert.equal((await getProductsService({...query,store_search:'not found'})).total,0);
+await assert.rejects(()=>getProductsService({store_id:'bad'}),e=>e.cause?.code===400);
+assert.equal((await getProductsService({limit:100})).total,30,'general catalog keeps all public stores');
+console.log('PASS real product service: store-scoped 8/8/4 pages, no duplicates/leakage, inactive exclusion, multilingual search, only active discounts, stock, price order, empty/invalid input, general catalog preserved');
