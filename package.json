@@ -15,7 +15,9 @@
     "test:attributes": "node --experimental-loader ./tests/review-loader.mjs tests/attributes-save.test.mjs",
     "test:review-authors": "node --experimental-loader ./tests/review-loader.mjs tests/review-author.test.mjs",
     "test:seller-onboarding": "node --experimental-loader ./tests/review-loader.mjs tests/seller-onboarding.test.mjs",
-    "test:chat": "node --experimental-loader ./tests/review-loader.mjs tests/chat.test.mjs"
+    "test:chat": "node --experimental-loader ./tests/review-loader.mjs tests/chat.test.mjs",
+    "test:account-orders": "node --experimental-loader ./tests/review-loader.mjs tests/account-orders.test.mjs",
+    "test:attributes-i18n": "node --experimental-loader ./tests/review-loader.mjs tests/attributes-i18n.test.mjs"
   },
   "keywords": [],
   "author": "",

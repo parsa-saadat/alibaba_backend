@@ -71,10 +71,7 @@ await assert.rejects(
   () => openConversationService({ seller_id: seller }, as(seller)),
   (e) => e.cause?.code === 400,
 );
-await assert.rejects(
-  () => openConversationService({ seller_id: seller }, as(admin)),
-  (e) => e.cause?.code === 403,
-);
+
 const conversation = await openConversationService(
   { seller_id: seller, product_id: product },
   as(buyer),
@@ -86,7 +83,7 @@ const again = await openConversationService({ seller_id: seller, product_id: pro
 assert.equal(String(again._id), cid, 'same pair must reuse one conversation');
 
 /* 2) ارسال پیام و شمار خوانده‌نشده */
-const sent = await sendMessageService(cid, { body: 'Is the 5km range real?' }, as(buyer));
+const sent = await sendMessageService(cid, { body: 'Is the 5km range real?', pin: {kind:'product',product_id:product} }, as(buyer));
 assert.equal(sent.sender_role, 'buyer');
 assert.equal(tables.chat_conversations[0].unread.seller, 1);
 assert.equal(tables.chat_conversations[0].unread.buyer, 0);
@@ -143,7 +140,7 @@ await assert.rejects(
   () => editMessageService(String(sent._id), { body: 'hijack' }, as(seller)),
   (e) => e.cause?.code === 403,
 );
-const edited = await editMessageService(String(sent._id), { body: 'Is the 5km range real?' }, as(buyer));
+const edited = await editMessageService(String(sent._id), { body: 'Is the 5km range real?', pin: {kind:'product',product_id:product} }, as(buyer));
 assert.ok(edited.edited_at);
 await assert.rejects(() => deleteMessageService(String(sent._id), as(seller)), (e) => e.cause?.code === 403);
 await deleteMessageService(String(pinned._id), as(buyer));
@@ -201,6 +198,40 @@ await deleteMessageService(
   as(multilang),
 );
 
+// Direct administrative participation is separate from read-only oversight.
+const direct = await openConversationService({ seller_id: seller }, as(admin));
+const directList = await listConversationsService({}, as(admin));
+assert.equal(directList.data.find(row => String(row._id) === String(direct._id)).role, 'buyer');
+await sendMessageService(String(direct._id), { body: 'Direct admin message' }, as(admin));
+await sendMessageService(String(direct._id), { body: 'Seller response' }, as(seller));
+assert.equal((await listMessagesService(String(direct._id), {}, as(admin))).data.length, 2);
+await assert.rejects(() => openConversationService({ seller_id: other, product_id: product }, as(seller)), e => e.cause?.code === 400);
+await assert.rejects(() => sendMessageService(String(direct._id), { body: 'intrusion' }, as(other)), e => e.cause?.code === 403);
+const initiated = await openConversationService({ recipient_id: other }, as(seller));
+await sendMessageService(String(initiated._id), { body: 'Seller initiated' }, as(seller));
+await sendMessageService(String(initiated._id), { body: 'Customer response' }, as(other));
+const ownSeller = await listConversationsService({ as: 'seller' }, as(seller));
+assert.ok(ownSeller.data.some(row => String(row._id) === String(initiated._id)));
+assert.equal(ownSeller.data.find(row => String(row._id) === String(initiated._id)).workspace,'seller');
+const ownBuyer = await listConversationsService({as:'buyer'}, as(seller));
+assert.ok(!ownBuyer.data.some(row => String(row._id) === String(initiated._id)));
+const peerId = new ObjectId().toString();
+tables.users.push({_id:peerId,role:'seller',is_seller:true,seller_approved_status:true,seller_active_status:'ACTIVE'});
+const peerChat = await openConversationService({seller_id:peerId},as(seller));
+const shopping = await listConversationsService({as:'buyer'},as(seller));
+const selling = await listConversationsService({as:'seller'},as(seller));
+assert.ok(shopping.data.some(row=>String(row._id)===String(peerChat._id)));
+assert.ok(!selling.data.some(row=>String(row._id)===String(peerChat._id)));
+const customerInbox = await listConversationsService({as:'buyer'},as(other));
+assert.ok(customerInbox.data.some(row=>String(row._id)===String(initiated._id)));
+assert.ok(!ownBuyer.data.some(row => String(row._id) === String(conversation._id)));
+await setConversationStatusService(cid, 'OPEN', as(admin));
+const plain = await sendMessageService(cid, {body:'No repeated product'}, as(buyer));
+assert.equal(plain.pin, null);
+const replyPlain = await sendMessageService(cid, {body:'No inherited product in reply'}, as(seller));
+assert.equal(replyPlain.pin, null);
+console.log('PASS V39: role-specific buyer/seller inboxes and explicit-only message pins');
+console.log('PASS V36: admin direct messages, seller initiation and replies, participant roles and third-party denial');
 console.log(
   'PASS actual chat services: approved+active seller gate, one conversation per pair, product pin cannot be swapped, buyer/seller unread counters, third party and stale admin token denied, seller panel locked for unapproved sellers, sender-only edit/delete, soft delete keeps the thread, admin read-only moderation with close/block, multi-language names never stringify to [object Object], WS-free service layer verified on the in-memory DB',
 );

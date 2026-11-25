@@ -14,3 +14,10 @@ const settlement={type:'card',card_number:'6037991234567890',sheba_number:'IR'+ 
 await updateSellerService(uid,{settlement_account:settlement},{_id:uid,role:'seller'});saved=await getSellerService(uid,{_id:uid,role:'seller'});assert.deepEqual(saved.settlement_account,settlement);assert.equal(saved.seller_approved_status,false);
 await assert.rejects(()=>updateSellerService(uid,{settlement_account:settlement},{_id:other,role:'customer'}));
 console.log('PASS actual seller services: exactly first/last/contact onboarding without bank/identity; canonical Persian-digit phone; login phone preserved; pending/untrusted/inactive unchanged; missing/invalid/duplicate/stale-admin targeting denied; owner settlement saved later without national ID/address; foreign owner denied');
+
+for (const role of ['admin','root','seller']) {
+ const rid = '507f1f77bcf86cd7994390' + ({admin:'21',root:'22',seller:'23'}[role]);
+ tables.users.push({_id:rid,role,is_seller:false});
+ await assert.rejects(()=>registerSellerService({firstname:'Admin',lastname:'Test',phone:'09123334444'},{_id:rid}), e=>e.cause?.code===400);
+}
+console.log('PASS V39: admin/root and legacy seller roles cannot register again even without is_seller flag');

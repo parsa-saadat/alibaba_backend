@@ -1,3 +1,4 @@
+import { accountOrderFilters, matchesAccountOrder, paymentStatus } from '../../utils/helpers/order-filter.helper.js';
 import { panelSearch } from '../../utils/helpers/panel-search.helper.js';
 import { statsActor, statsMoney } from '../../utils/helpers/stats.helper.js';
 import { orderStats } from '../../model/controller/order.controller.js';
@@ -829,18 +830,15 @@ export const getOrdersService = async (filter = {}, requester) => {
 
   const isDesc = desc === 'true' || desc === true;
 
-  const isAdmin = requester.role === 'admin';
-  const isSeller = requester.is_seller === true;
-
-  // ⭐ فروشنده نباید از این endpoint استفاده کنه
-  if (isSeller && !isAdmin)
-    throw new Error('Sellers must use /order/sub/parent/:parentId endpoint', {
-      cause: { code: 403 },
-    });
+  const isAdmin = ['admin','root'].includes(requester.role);
+  // Sellers also buy: this endpoint remains restricted to their customer_id.
+  const accountStatus = String(filter.status || 'all').toLowerCase();
+  if (!accountOrderFilters.includes(accountStatus))
+    throw new Error('Order filter is not valid', { cause: { code: 400 } });
 
   let parents = [];
 
-  if (isAdmin) {
+  if (isAdmin && filter.scope !== 'buyer') {
     parents = await findOrders({}, isDesc);
   } else {
     parents = await findOrders({ customer_id: requester._id }, isDesc);
@@ -860,6 +858,18 @@ export const getOrdersService = async (filter = {}, requester) => {
     }
     parents = matches;
   }
+  const paid = parents.filter(order => paymentStatus(order) === 'paid');
+  const summary = { count: parents.length, paid: paid.length, spent: paid.reduce((sum, order) => sum + (Number(order.final_amount ?? order.total_amount ?? order.amount ?? 0) || 0), 0) };
+  const cachedSubs = new Map();
+  if (accountStatus !== 'all') {
+    const matches = [];
+    for (const parent of parents) {
+      const subs = await findSubOrders({ parent_order_id: parent._id });
+      cachedSubs.set(String(parent._id), subs);
+      if (matchesAccountOrder(parent, subs, accountStatus)) matches.push(parent);
+    }
+    parents = matches;
+  }
   const total = parents.length;
   const totalPages = Math.ceil(total / limit);
   const start = (page - 1) * limit;
@@ -867,11 +877,11 @@ export const getOrdersService = async (filter = {}, requester) => {
 
   const data = [];
   for (const p of parents) {
-    const subs = await findSubOrders({ parent_order_id: p._id });
+    const subs = cachedSubs.get(String(p._id)) || await findSubOrders({ parent_order_id: p._id });
     data.push({ ...p, sub_orders: subs });
   }
 
-  return { data, total, totalPages };
+  return { data, total, totalPages, summary };
 };
 
 // ─────────────────────────────────────────────
@@ -887,15 +897,8 @@ export const getOrderService = async (orderId, requester) => {
   const parent = await findOneOrder({ _id: orderId });
   if (!parent) throw new Error('Order not found', { cause: { code: 404 } });
 
-  const isAdmin = requester.role === 'admin';
-  const isSeller = requester.is_seller === true;
+  const isAdmin = ['admin','root'].includes(requester.role);
   const isCustomer = String(parent.customer_id) === String(requester._id);
-
-  // ⭐ فروشنده نباید از این endpoint استفاده کنه
-  if (isSeller && !isAdmin)
-    throw new Error('Sellers must use /order/sub/parent/:parentId endpoint', {
-      cause: { code: 403 },
-    });
 
   if (!isAdmin && !isCustomer) throw new Error('No Access', { cause: { code: 403 } });
 

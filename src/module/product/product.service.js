@@ -68,7 +68,9 @@ const MAX_CATEGORIES_PER_PRODUCT = 10;
 // createProductService
 // ─────────────────────────────────────────────
 export const createProductService = async (data, requester, { duplicate = false } = {}) => {
+  const attributeInput = data?.key_attributes;
   data = deriveContent(data, 'product');
+  if (attributeInput !== undefined) data.key_attributes = attributeInput;
   const user = await findOneUser({ _id: requester._id });
 
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
@@ -1105,7 +1107,9 @@ export const searchStoresByProductService = async (filter = {}) => {
 // updateProductService
 // ─────────────────────────────────────────────
 export const updateProductService = async (id, data, requester) => {
+  const attributeInput = data?.key_attributes;
   data = deriveContent(data, 'product');
+  if (attributeInput !== undefined) data.key_attributes = attributeInput;
   if (!id || typeof id !== 'string' || id.length !== 24 || !ObjectId.isValid(id))
     throw new Error('Invalid product id', { cause: { code: 400 } });
 

@@ -16,7 +16,7 @@ export const registerSellerService = async (data, requester) => {
   if (String(id) !== String(current._id) && current.role !== 'admin') throw new Error('Access Denied', { cause: { code: 403 } });
   const user = String(id) === String(current._id) ? current : await findOneUser({ _id: id });
   if (!user) throw new Error('User not found', { cause: { code: 404 } });
-  if (user.is_seller) throw new Error('User is already a seller', { cause: { code: 400 } });
+  if (user.is_seller || ['seller','admin','root'].includes(String(user.role || '').toLowerCase())) throw new Error('This account cannot submit another seller application', { cause: { code: 400 } });
   for (const field of ['firstname','lastname']) if (typeof data[field] !== 'string' || !data[field].trim() || data[field].trim().length > 80) throw new Error('First name and last name are required (1–80 characters)', { cause: { code: 400 } });
   let phone = String(data.phone || '').trim().replace(/[۰-۹]/g,c=>String('۰۱۲۳۴۵۶۷۸۹'.indexOf(c))).replace(/[٠-٩]/g,c=>String('٠١٢٣٤٥٦٧٨٩'.indexOf(c))).replace(/[\s()-]/g,'');
   if (!validateIRPhoneSyntax(phone)) throw new Error('Invalid contact phone number', { cause: { code: 400 } });

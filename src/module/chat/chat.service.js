@@ -47,9 +47,9 @@ async function actorUser(actor) {
 
 /* نقش بازیگر در این گفتگو: buyer | seller | admin */
 function roleIn(conversation, user) {
-  if (user.role === 'admin' || user.role === 'root') return 'admin';
   if (String(conversation.buyer_id) === String(user._id)) return 'buyer';
   if (String(conversation.seller_id) === String(user._id)) return 'seller';
+  if (user.role === 'admin' || user.role === 'root') return 'admin';
   return null;
 }
 
@@ -73,7 +73,7 @@ async function accessConversation(id, user, { manage = false } = {}) {
   if (role === 'admin') return { row, role: 'admin' };
   if (!role) throw chatError('Access denied', 403);
 
-  if (role === 'seller' && !isReachableSeller(user))
+  if (role === 'seller' && row.recipient_is_seller !== false && !isReachableSeller(user))
     throw chatError('Only approved and active sellers can use chat', 403);
 
   if (manage && row.status === 'BLOCKED') throw chatError('Conversation is blocked', 403);
@@ -191,6 +191,7 @@ async function publicConversation(row, participants, role, lastMessage = null) {
     _id: row._id,
     status: row.status || 'OPEN',
     role: role === 'admin' ? 'admin' : role,
+    workspace: role === 'admin' ? 'admin' : row.recipient_is_seller === false ? (role === 'buyer' ? 'seller' : 'buyer') : role,
     buyer: publicParticipant(buyer),
     seller: publicParticipant(seller),
     store_id: row.store_id ? String(row.store_id) : null,
@@ -221,16 +222,15 @@ async function participantsFor(rows) {
 
 export async function openConversationService(data = {}, actor) {
   const user = await actorUser(actor);
-  if (user.role === 'admin' || user.role === 'root')
-    throw chatError('Admins do not buy; use a seller account to chat', 403);
+  const canContactUsers = ['admin','root'].includes(user.role) || isReachableSeller(user);
 
-  const sellerId = chatOid(data.seller_id, 'seller id');
+  const sellerId = chatOid(data.recipient_id || data.seller_id, 'recipient id');
   const productId = optionalOid(data.product_id, 'product id');
   const storeId = optionalOid(data.store_id, 'store id');
 
   const seller = await db.collection('users').findOne({ _id: sellerId });
-  if (!seller || !seller.is_seller) throw chatError('Seller not found', 404);
-  if (!isReachableSeller(seller))
+  if (!seller || (!seller.is_seller && !canContactUsers)) throw chatError('Seller not found', 404);
+  if (seller.is_seller && !isReachableSeller(seller))
     throw chatError('This seller is not available for chat yet', 409);
   if (String(seller._id) === String(user._id))
     throw chatError('You cannot chat with yourself', 400);
@@ -250,6 +250,13 @@ export async function openConversationService(data = {}, actor) {
       .collection('stores')
       .findOne({ user: sellerId, status: 'ENABLE' }, { sort: { _id: 1 } });
     resolvedStore = store?._id || null;
+  }
+  if (product?.seller_id && String(product.seller_id) !== String(sellerId))
+    throw chatError('Product does not belong to this seller', 400);
+  if (product?.store_id) {
+    const productStore = await db.collection('stores').findOne({ _id: new ObjectId(String(product.store_id)) });
+    if (!productStore || String(productStore.user) !== String(sellerId))
+      throw chatError('Product store does not belong to this seller', 400);
   }
   if (storeId) {
     const store = await db.collection('stores').findOne({ _id: new ObjectId(storeId) });
@@ -276,6 +283,7 @@ export async function openConversationService(data = {}, actor) {
   const doc = {
     buyer_id: user._id,
     seller_id: sellerId,
+    recipient_is_seller: seller.is_seller === true,
     product_id: productId || null,
     store_id: resolvedStore,
     status: 'OPEN',
@@ -305,8 +313,9 @@ export async function listConversationsService(query = {}, actor) {
   if (isAdmin && query.scope === 'all') filter = {};
   else if (asSeller) {
     if (!isReachableSeller(user)) throw chatError('Only approved and active sellers can use chat', 403);
-    filter = { seller_id: user._id };
-  } else filter = { $or: [{ buyer_id: user._id }, { seller_id: user._id }] };
+    filter = { $or: [{ seller_id: user._id, recipient_is_seller: { $ne: false } }, { buyer_id: user._id, recipient_is_seller: false }] };
+  } else if (query.as === 'buyer') filter = { $or: [{ buyer_id: user._id, recipient_is_seller: { $ne: false } }, { seller_id: user._id, recipient_is_seller: false }] };
+  else filter = { $or: [{ buyer_id: user._id }, { seller_id: user._id }] };
 
   const rows = await db
     .collection('chat_conversations')
@@ -417,9 +426,7 @@ export async function sendMessageService(id, data = {}, actor) {
     pin.product_id = new ObjectId(String(row.product_id));
   const resolvedPin = pin
     ? { kind: pin.kind, product_id: row.product_id || pin.product_id, store_id: row.store_id || pin.store_id }
-    : row.product_id || row.store_id
-      ? { kind: row.product_id ? 'product' : 'store', product_id: row.product_id, store_id: row.store_id }
-      : null;
+    : null;
 
   await ensureIndexes();
   const now = new Date();
@@ -450,6 +457,7 @@ export async function sendMessageService(id, data = {}, actor) {
   const payload = await publicMessage(message, role);
   /* نام فرستنده فقط برای اعلان کلاینت اضافه می‌شود؛ در دیتابیس ذخیره نمی‌شود */
   payload.sender_name = displayName(user);
+  payload.recipient_is_seller = row.recipient_is_seller !== false;
   const audience = [row.buyer_id, row.seller_id];
   broadcast(audience, { type: 'message:new', conversation_id: String(row._id), message: payload });
   broadcast(audience, {
@@ -477,7 +485,7 @@ export async function editMessageService(messageId, data = {}, actor) {
   const role = roleIn(conversation, user);
   if (role === 'admin') throw chatError('Admins cannot rewrite messages', 403);
   if (String(message.sender_id) !== String(user._id)) throw chatError('Not your message', 403);
-  if (role === 'seller' && !isReachableSeller(user))
+  if (role === 'seller' && conversation.recipient_is_seller !== false && !isReachableSeller(user))
     throw chatError('Only approved and active sellers can use chat', 403);
   if (message.deleted_at) throw chatError('Deleted messages cannot be edited', 409);
 
@@ -510,7 +518,7 @@ export async function deleteMessageService(messageId, actor) {
 
   if (!isAdmin && String(message.sender_id) !== String(user._id))
     throw chatError('Not your message', 403);
-  if (!isAdmin && role === 'seller' && !isReachableSeller(user))
+  if (!isAdmin && role === 'seller' && conversation.recipient_is_seller !== false && !isReachableSeller(user))
     throw chatError('Only approved and active sellers can use chat', 403);
 
   const deleted_at = new Date();
@@ -563,14 +571,17 @@ export async function chatUnreadService(actor) {
   const sellerBlocked = user.is_seller === true && !isReachableSeller(user);
   let total = 0;
   let conversations = 0;
+  let buyer_total = 0, seller_total = 0;
   for (const row of rows) {
     const role = roleIn(row, user);
     if (role === 'seller' && sellerBlocked) continue;
     const n = role === 'seller' ? row.unread?.seller || 0 : row.unread?.buyer || 0;
     if (n > 0) conversations += 1;
     total += n;
+    const workspace = row.recipient_is_seller === false ? (role === 'buyer' ? 'seller' : 'buyer') : role;
+    if (workspace === 'seller') seller_total += n; else buyer_total += n;
   }
-  return { total, conversations, blocked: sellerBlocked };
+  return { total, conversations, buyer_total, seller_total, blocked: sellerBlocked };
 }
 
 /* ------------------------------------------------------------------ */
